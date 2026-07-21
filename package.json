@@ -1,0 +1,26 @@
+{
+  "name": "autosequence-v2",
+  "version": "2.0.0",
+  "description": "AutoSequence Web - herramienta de automatización industrial (PLC): definición de señales, reglas SI/ENTONCES, simulación temporal y generación de código AWL/KOP.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "plc",
+    "automation",
+    "awl",
+    "kop",
+    "ladder",
+    "step7",
+    "industrial"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  }
+}

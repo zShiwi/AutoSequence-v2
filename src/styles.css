@@ -1,0 +1,397 @@
+/*
+ * Estilos de AutoSequence, adaptados del styles.css original conservando la
+ * identidad visual (paleta, tarjetas, tabla de señales, tarjetas de reglas).
+ * Se han retirado los estilos exclusivos del editor de dibujo SVG y la
+ * exportación PDF, que corresponden a la segunda fase.
+ */
+
+body {
+  font-family: "Inter", "Segoe UI", Arial, sans-serif;
+  background: linear-gradient(135deg, #726fff 0%, #9e7de7 100%);
+  min-height: 100vh;
+  color: #232b36;
+  margin: 0;
+}
+
+.container,
+.step,
+.diagram-container,
+.rule-builder,
+.actions-group,
+.condition-group,
+.project-box {
+  background: #f4f6f8;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(30, 30, 30, 0.05);
+  border: 1.5px solid #d2d8dd;
+  color: #232b36;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 24px auto;
+  padding: 24px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.subtitle {
+  color: #f4f6f8;
+}
+
+h1,
+h2,
+h3,
+.step-title {
+  color: #232b36;
+  font-weight: 700;
+}
+
+/* ---- Tabla de señales ---- */
+.signals-table {
+  width: 100%;
+  border-collapse: separate;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(40, 52, 70, 0.06);
+  margin-bottom: 30px;
+  font-size: 15px;
+}
+.signals-table th {
+  background: #e3e8ee;
+  color: #36435c;
+  border-bottom: 2px solid #dee2e6;
+  font-weight: 700;
+  padding: 12px 14px;
+  text-align: left;
+}
+.signals-table td {
+  border-bottom: 1px solid #ececec;
+  background: #f9fafb;
+  color: #232b36;
+  padding: 11px 13px;
+}
+.signals-table tr:nth-child(even) td {
+  background: #f4f6fa;
+}
+
+/* ---- Botones ---- */
+.btn,
+.btn-secondary,
+.btn-danger {
+  background: #395b8b;
+  color: #fff;
+  border-radius: 6px;
+  padding: 9px 18px;
+  font-size: 15px;
+  border: 1.2px solid #232b36;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 42px;
+}
+.btn-secondary {
+  background: #4e5863;
+  border-color: #4e5863;
+}
+.btn-danger {
+  background: #d95040;
+  border-color: #b33b2a;
+}
+.btn-warning {
+  background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+  color: #fff;
+  border: 1.2px solid #dd6b20;
+  border-radius: 6px;
+  padding: 9px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-small {
+  font-size: 13px;
+  padding: 7px 13px;
+}
+
+input,
+select,
+textarea {
+  border-radius: 5px;
+  border: 1.2px solid #c3c6c9;
+  background: #fff;
+  color: #232b36;
+  font-size: 15px;
+  padding: 8px 12px;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #395b8b;
+  outline: none;
+}
+.error-input {
+  border-color: #d95040 !important;
+  background: #fff5f5 !important;
+}
+
+/* ---- Selector de proyectos ---- */
+.project-box {
+  padding: 32px;
+  max-width: 650px;
+  margin: 35px auto;
+}
+.project-input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+.project-list-btn {
+  width: 100%;
+  text-align: left;
+  padding: 10px 15px;
+  border-radius: 8px;
+  border: none;
+  background: #f8fafc;
+  font-weight: bold;
+  color: #333;
+  cursor: pointer;
+}
+.project-list-btn:hover {
+  background: #e2e8f0;
+}
+.delete-project-btn {
+  background: #e53e3e;
+  color: white;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-left: 5px;
+  cursor: pointer;
+  font-size: 16px;
+}
+.create-project-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  background: #667eea;
+  color: white;
+  font-weight: bold;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+}
+.create-project-btn:hover {
+  background: #5a67d8;
+}
+.mr-10 {
+  margin-right: 10px;
+}
+.title-centered {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.projects-list {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 20px;
+}
+
+.error-message {
+  color: #e53e3e;
+  font-size: 14px;
+  margin-top: 10px;
+  padding: 10px;
+  background: #fed7d7;
+  border-radius: 8px;
+  border: 1px solid #feb2b2;
+}
+.success-message {
+  color: #22543d;
+  font-size: 14px;
+  margin-top: 10px;
+  padding: 10px;
+  background: #c6f6d5;
+  border-radius: 8px;
+  border: 1px solid #9ae6b4;
+}
+.hidden {
+  display: none;
+}
+
+/* ---- Pasos ---- */
+.step {
+  margin-bottom: 38px;
+  padding: 26px 32px;
+  border-radius: 18px;
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 3px solid #f0f4f8;
+  gap: 16px;
+}
+.step-number {
+  background: linear-gradient(135deg, #726fff 0%, #9e7de7 100%);
+  color: white;
+  width: 50px;
+  height: 50px;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 1.4em;
+}
+.step-title {
+  font-size: 1.6em;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+.step-description {
+  color: #7c82a1;
+  margin: 5px 0 0;
+}
+
+/* ---- Constructor de reglas ---- */
+.rule-builder {
+  padding: 30px;
+  margin-bottom: 38px;
+}
+.rule-builder h3 {
+  margin-bottom: 25px;
+  font-size: 1.3em;
+}
+.condition-group,
+.actions-group {
+  background: #fff;
+  border-radius: 14px;
+  padding: 24px 20px 12px;
+  margin-bottom: 22px;
+  border: 2px solid #e2e8f0;
+}
+.condition-group h4,
+.actions-group h4 {
+  color: #726fff;
+  margin-bottom: 16px;
+  font-size: 1.08em;
+}
+.condition-item,
+.action-item {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  padding: 12px 10px;
+  margin-bottom: 8px;
+  background: #f4f6fb;
+  border-radius: 10px;
+  border: 1.3px solid #ececec;
+}
+.form-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0px;
+  min-width: 130px;
+}
+.form-group label {
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: #6a6f8a;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ---- Tarjetas de reglas ---- */
+.rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin: 40px 0 38px;
+}
+.rule-card {
+  background: #fff;
+  border-radius: 15px;
+  box-shadow: 0 4px 18px rgba(102, 126, 234, 0.07);
+  border: 2px solid #e2e8f0;
+  overflow: hidden;
+}
+.rule-card:hover {
+  border-color: #764ba2;
+}
+.rule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+  padding: 20px 26px 16px;
+  border-bottom: 1.5px solid #e2e8f0;
+}
+.rule-title {
+  font-weight: bold;
+  font-size: 1.17em;
+  color: #333;
+}
+.rule-conditions {
+  background: #f5faff;
+  padding: 16px 26px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.rule-conditions strong {
+  color: #3b82f6;
+}
+.rule-actions {
+  background: #e8f7ef;
+  padding: 16px 26px;
+}
+.rule-actions strong {
+  color: #22c55e;
+}
+
+/* ---- Cabecera con botones ---- */
+.top-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 22px 28px 16px;
+}
+
+/* ---- Diagrama temporal ---- */
+.diagram-container {
+  padding: 24px;
+}
+.timing-svg {
+  min-width: 100%;
+}
+.diagram-empty {
+  color: #718096;
+  font-style: italic;
+}
+.close-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  font-weight: bold;
+  color: #4a5568;
+  cursor: pointer;
+}
+.close-btn:hover {
+  color: #e53e3e;
+}
+
+@media (max-width: 700px) {
+  .condition-item,
+  .action-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .signals-table {
+    font-size: 12px;
+  }
+}
