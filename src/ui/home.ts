@@ -10,7 +10,7 @@ import {
   loadProjects,
   nameTaken,
 } from '../state/store';
-import { exampleBlocks, exampleCajetin, exampleSignals } from '../data/example';
+import { TEMPLATES, templateStats, type Template } from '../data/templates';
 import { confirmDialog, download, esc, h, icon, promptDialog, qs, slug, toast } from './dom';
 import type { App } from './app';
 
@@ -48,19 +48,43 @@ export function renderHome(app: App): HTMLElement {
     app.openProject(res.project.id!);
   };
 
-  const newExample = () => {
-    let name = 'Estación de transferencia (ejemplo)';
+  const fromTemplate = (t: Template) => {
+    let name = t.projectName;
     let n = 2;
-    while (nameTaken(name)) name = `Estación de transferencia (ejemplo ${n++})`;
-    const res = createProject(name, {
-      signals: exampleSignals(),
-      blocks: exampleBlocks(),
-      cajetin: exampleCajetin(),
-    });
+    while (nameTaken(name)) name = `${t.projectName} (${n++})`;
+    const res = createProject(name, t.build());
     if (!res.ok) return toast(res.error, 'error');
-    toast('Proyecto de ejemplo creado.');
+    toast(`Proyecto «${name}» creado desde la plantilla.`);
     app.openProject(res.project.id!, 'sim');
   };
+
+  const templatesHtml = () => `
+    <section class="templates" aria-labelledby="tpl-title">
+      <div class="section-head">
+        <h2 id="tpl-title">Plantillas</h2>
+        <p class="muted small">Proyectos completos, listos para simular, generar código y documentar.</p>
+      </div>
+      <div class="tpl-grid">
+        ${TEMPLATES.map((t) => {
+          const s = templateStats(t);
+          return `<article class="tpl">
+            <h3>${esc(t.name)}</h3>
+            <p>${esc(t.description)}</p>
+            <dl class="tpl__stats">
+              <div><dt>Señales</dt><dd>${s.signals}</dd></div>
+              <div><dt>Reglas</dt><dd>${s.rules}</dd></div>
+              <div><dt>Bloques</dt><dd>${s.blocks}</dd></div>
+            </dl>
+            <button class="btn btn--ghost btn--sm" data-template="${t.id}">${icon('plus', 15)}<span>Crear desde plantilla</span></button>
+          </article>`;
+        }).join('')}
+      </div>
+    </section>`;
+
+  const bindTemplates = () =>
+    list.querySelectorAll<HTMLElement>('[data-template]').forEach((b) =>
+      b.addEventListener('click', () => fromTemplate(TEMPLATES.find((t) => t.id === b.dataset.template)!)),
+    );
 
   const draw = () => {
     const projects = loadProjects().sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -69,14 +93,14 @@ export function renderHome(app: App): HTMLElement {
         <div class="empty">
           <div class="empty__art" aria-hidden="true">${icon('folder', 34)}</div>
           <h2>Aún no hay proyectos</h2>
-          <p>Empieza desde cero o abre un ejemplo completo con una secuencia de dos cilindros, ya simulada y documentada.</p>
+          <p>Empieza desde cero o parte de una plantilla de las de abajo.</p>
           <div class="empty__actions">
-            <button class="btn btn--primary" data-act="new2">${icon('plus', 16)}<span>Nuevo proyecto</span></button>
-            <button class="btn btn--ghost" data-act="example">${icon('play', 16)}<span>Abrir ejemplo</span></button>
+            <button class="btn btn--primary" data-act="new2">${icon('plus', 16)}<span>Nuevo proyecto vacío</span></button>
           </div>
-        </div>`;
+        </div>
+        ${templatesHtml()}`;
       qs(list, '[data-act="new2"]').addEventListener('click', newProject);
-      qs(list, '[data-act="example"]').addEventListener('click', newExample);
+      bindTemplates();
       return;
     }
 
@@ -107,14 +131,14 @@ export function renderHome(app: App): HTMLElement {
           </tbody>
         </table>
       </div></div>
-      <p class="footnote">Los proyectos se guardan automáticamente en este navegador. Usa <strong>Exportar</strong> para hacer copias o pasarlos a otro equipo.
-        <button class="link" data-act="example">Crear el proyecto de ejemplo</button></p>`;
+      <p class="footnote">Los proyectos se guardan automáticamente en este navegador. Usa <strong>Exportar</strong> para hacer copias o pasarlos a otro equipo.</p>
+      ${templatesHtml()}`;
 
-    qs(list, '[data-act="example"]').addEventListener('click', newExample);
+    bindTemplates();
     list.querySelectorAll<HTMLTableRowElement>('tbody tr').forEach((tr) => {
       const id = tr.dataset.id!;
       const p = projects.find((x) => x.id === id)!;
-      tr.addEventListener('click', async (e) => {
+        tr.addEventListener('click', async (e) => {
         const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
         if (act === 'dup') {
           const copy = duplicateProject(id);

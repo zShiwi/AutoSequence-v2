@@ -34,6 +34,9 @@ export function buildRows(signals: Signal[], rules: Rule[], only?: Set<string>):
   const targets = actionTargets(rules);
   const derived = derivedSignals(signals);
   const rows: WaveRow[] = [];
+  // Inductivos de cilindros que no pertenecen al bloque (condiciones que
+  // llegan de otra zona): se agrupan al final.
+  const external: WaveRow[] = [];
   signals.forEach((s) => {
     if (!only || only.has(s.name)) {
       const kind: WaveRow['kind'] =
@@ -42,9 +45,9 @@ export function buildRows(signals: Signal[], rules: Rule[], only?: Set<string>):
     }
     derived
       .filter((d) => d.source === s.name && (!only || only.has(d.name)))
-      .forEach((d) => rows.push({ name: d.name, kind: 'derived' }));
+      .forEach((d) => (only && !only.has(d.source) ? external : rows).push({ name: d.name, kind: 'derived' }));
   });
-  return rows;
+  return [...rows, ...external];
 }
 
 const KIND_TAG: Record<WaveRow['kind'], string> = {
