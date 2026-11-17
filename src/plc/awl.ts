@@ -1,89 +1,141 @@
 /**
- * Generación de código AWL (STEP 7 / lista de instrucciones Siemens).
+ * Generación de código AWL (lista de instrucciones STEP 7, nemotecnia alemana).
  *
- * Portado de `generateAWL()` del index.html original.
+ * Corrige el AWL del prototipo original, que comparaba enteros con ==I y
+ * saltaba a la etiqueta de "no cumple" justo cuando la condición SÍ se
+ * cumplía (lógica invertida), y no implementaba los flancos.
+ *
+ * Estructura generada (equivalente exacto al simulador):
+ *  - Network 1: detección de flancos con FP/FN al inicio del ciclo.
+ *  - Una network por regla: cadena Y de condiciones → marca "regla activa"
+ *    → SET/RESET/alternar de cada acción.
  */
 
-import type { Block } from '../types';
+import type { Block, Condition } from '../types';
+import {
+  EDGE_MEMORY_BYTE,
+  EDGE_PULSE_BYTE,
+  RULE_FLAG_BYTE,
+  bitAddress,
+} from './addresses';
 
-export function generateAWL(blocks: Block[]): string {
-  let awl = '';
-  awl += '      // ==== BLOQUE OB1 AUTOGENERADO ====\n';
-  awl += 'VERSION : 5.5\n';
-  awl += 'OB1   // Bloque principal\n\n';
+interface EdgeSlot {
+  key: string;
+  signal: string;
+  rising: boolean;
+  memory: string;
+  pulse: string;
+}
 
-  blocks.forEach((bloque, idxBloque) => {
-    if (!bloque.rules || bloque.rules.length === 0) return;
+const pad = (s: string, n: number) => (s.length >= n ? s + ' ' : s + ' '.repeat(n - s.length));
 
-    awl += `      // --- BLOQUE: ${bloque.name} ---\n`;
-    bloque.rules.forEach((rule, idxRule) => {
-      awl += `\n      // Regla ${idxRule + 1}: ${rule.name}\n`;
+function sym(name: string): string {
+  return `"${name}"`;
+}
 
-      const etiquetaSalto = `NO_CUMPLE_B${idxBloque}_R${idxRule}`;
-      const etiquetaFin = `FIN_B${idxBloque}_R${idxRule}`;
+function line(op: string, operand = '', comment = ''): string {
+  const body = `      ${pad(op, 6)}${operand}`;
+  return comment ? `${pad(body, 44)}// ${comment}` : body;
+}
 
-      // Condiciones (AND): cada una salta a la etiqueta si no se cumple.
-      rule.conditions.forEach((cond) => {
-        const senal = cond.signal;
-        if (cond.event === '==1' || cond.event === '==0') {
-          const valor = cond.event === '==1' ? '1' : '0';
-          awl += `      L   #${senal}\n`;
-          awl += `      L   ${valor}\n`;
-          awl += `      ==I\n`;
-          awl += `      JC  ${etiquetaSalto}\n`;
-        } else if (cond.event === 'Flanco ascendente') {
-          awl += `      // Flanco ascendente ${senal}: (previo=0 y actual=1)\n`;
-          awl += `      // (Aún no implementado retener estado anterior)\n`;
-          awl += `      L   #${senal}\n`;
-          awl += `      L   1\n`;
-          awl += `      ==I\n`;
-          awl += `      JC  ${etiquetaSalto}\n`;
-        } else if (cond.event === 'Flanco descendente') {
-          awl += `      // Flanco descendente ${senal}: (previo=1 y actual=0)\n`;
-          awl += `      // (Aún no implementado retener estado anterior)\n`;
-          awl += `      L   #${senal}\n`;
-          awl += `      L   0\n`;
-          awl += `      ==I\n`;
-          awl += `      JC  ${etiquetaSalto}\n`;
-        } else {
-          awl += `      L   #${senal}\n`;
-          awl += `      L   1\n`;
-          awl += `      ==I\n`;
-          awl += `      JC  ${etiquetaSalto}\n`;
-        }
+export interface AwlOptions {
+  /** Nombre del proyecto para la cabecera. */
+  projectName?: string;
+}
+
+export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
+  const out: string[] = [];
+  const rules = blocks.flatMap((b, bi) => (b.rules || []).map((r) => ({ r, bi, block: b })));
+
+  // 1) Reservar memorias para cada flanco distinto usado.
+  const edges = new Map<string, EdgeSlot>();
+  rules.forEach(({ r }) =>
+    r.conditions.forEach((c) => {
+      if (c.event !== 'Flanco ascendente' && c.event !== 'Flanco descendente') return;
+      const rising = c.event === 'Flanco ascendente';
+      const key = `${c.signal}|${rising ? 'P' : 'N'}`;
+      if (edges.has(key)) return;
+      const i = edges.size;
+      edges.set(key, {
+        key,
+        signal: c.signal,
+        rising,
+        memory: bitAddress('M', i, EDGE_MEMORY_BYTE),
+        pulse: bitAddress('M', i, EDGE_PULSE_BYTE),
       });
+    }),
+  );
 
-      // Acciones: se ejecutan si todas las condiciones pasaron.
-      rule.actions.forEach((act, idxAcc) => {
-        const senalAcc = act.signal;
-        if (act.value === '1' || act.value === '0') {
-          awl += `      L   ${act.value}\n`;
-          awl += `      T   #${senalAcc}\n`;
-        } else if (act.value === 'toggle') {
-          const etTog = `TOG_B${idxBloque}_R${idxRule}_A${idxAcc}`;
-          const etTogFin = `FIN_TOG_B${idxBloque}_R${idxRule}_A${idxAcc}`;
-          awl += `      // Toggle ${senalAcc}\n`;
-          awl += `      L   #${senalAcc}\n`;
-          awl += `      L   1\n`;
-          awl += `      ==I\n`;
-          awl += `      JC  ${etTog}\n`;
-          awl += `      L   1\n`;
-          awl += `      T   #${senalAcc}\n`;
-          awl += `      JU  ${etTogFin}\n`;
-          awl += `\n${etTog}:\n`;
-          awl += `      L   0\n`;
-          awl += `      T   #${senalAcc}\n`;
-          awl += `${etTogFin}:\n`;
-        }
-      });
+  out.push('// ============================================================');
+  out.push(`// OB1 - Ciclo principal${opts.projectName ? ` · Proyecto: ${opts.projectName}` : ''}`);
+  out.push('// Generado por AutoSequence. Requiere la tabla de símbolos.');
+  out.push('// ============================================================');
+  out.push('ORGANIZATION_BLOCK OB 1');
+  out.push('TITLE = Secuencia autogenerada');
+  out.push('VERSION : 0.1');
+  out.push('');
+  out.push('BEGIN');
 
-      awl += `\n${etiquetaSalto}:\n`;
-      awl += `      NOP\n`;
-      awl += `${etiquetaFin}:\n`;
-      awl += `      NOP\n\n`;
+  let network = 1;
+  if (edges.size) {
+    out.push(`NETWORK // ${network++}`);
+    out.push('TITLE = Detección de flancos (inicio de ciclo)');
+    edges.forEach((e) => {
+      out.push(line('U', sym(e.signal)));
+      out.push(line(e.rising ? 'FP' : 'FN', e.memory, `memoria flanco ${e.rising ? '↑' : '↓'} ${e.signal}`));
+      out.push(line('=', e.pulse, `pulso flanco ${e.rising ? '↑' : '↓'} ${e.signal}`));
     });
+    out.push('');
+  }
+
+  const condLine = (c: Condition): string => {
+    switch (c.event) {
+      case '==1':
+        return line('U', sym(c.signal), `${c.signal} = 1`);
+      case '==0':
+        return line('UN', sym(c.signal), `${c.signal} = 0`);
+      default: {
+        const rising = c.event === 'Flanco ascendente';
+        const e = edges.get(`${c.signal}|${rising ? 'P' : 'N'}`)!;
+        return line('U', e.pulse, `flanco ${rising ? '↑' : '↓'} ${c.signal}`);
+      }
+    }
+  };
+
+  let currentBlock = -1;
+  rules.forEach(({ r, bi, block }, idx) => {
+    if (bi !== currentBlock) {
+      currentBlock = bi;
+      out.push(`// ------------------------------------------------------------`);
+      out.push(`// BLOQUE: ${block.name}`);
+      out.push(`// ------------------------------------------------------------`);
+    }
+    const flag = bitAddress('M', idx, RULE_FLAG_BYTE);
+    out.push(`NETWORK // ${network++}`);
+    out.push(`TITLE = ${r.name}`);
+    r.conditions.forEach((c) => out.push(condLine(c)));
+    out.push(line('=', flag, 'regla activa'));
+
+    r.actions.forEach((a, ai) => {
+      if (a.value === '1') {
+        out.push(line('U', flag));
+        out.push(line('S', sym(a.signal), `SET ${a.signal}`));
+      } else if (a.value === '0') {
+        out.push(line('U', flag));
+        out.push(line('R', sym(a.signal), `RESET ${a.signal}`));
+      } else {
+        const label = `T${String(idx + 1).padStart(2, '0')}${ai}`;
+        out.push(line('U', flag));
+        out.push(line('SPBN', label, `saltar si la regla no está activa`));
+        out.push(line('UN', sym(a.signal)));
+        out.push(line('=', sym(a.signal), `ALTERNAR ${a.signal}`));
+        out.push(`${label}: NOP 0`);
+      }
+    });
+    out.push('');
   });
 
-  awl += '      // ==== FIN DE BLOQUE OB1 ====\n';
-  return awl;
+  if (!rules.length) out.push('      // (sin reglas definidas)');
+  out.push('END_ORGANIZATION_BLOCK');
+  return out.join('\n') + '\n';
 }

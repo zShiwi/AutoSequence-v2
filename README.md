@@ -1,47 +1,73 @@
 # AutoSequence v2
 
-Herramienta de ingeniería de automatización industrial (PLC). Permite definir
-las señales de un sistema, construir reglas de automatización `SI (condiciones)
-→ ENTONCES (acciones)` agrupadas en bloques, simular el comportamiento temporal
-y generar código **AWL** (STEP 7 / lista de instrucciones Siemens) y **KOP**
-(diagrama de contactos / Ladder).
+Herramienta de ingeniería de automatización industrial. Define las señales de
+una máquina y sus reglas `SI … ENTONCES …`, simula la secuencia ciclo a ciclo y
+genera el programa PLC (**AWL** y **KOP**, STEP 7) y la **documentación A3**
+con cajetín normalizado.
 
-Esta es una reestructuración del prototipo original, que vivía en un único
-`index.html` de ~10.000 líneas, hacia un proyecto **Vite + TypeScript** con
-módulos separados por dominio.
+Reestructuración del prototipo original (un único `index.html` de ~10.000
+líneas) a **Vite + TypeScript** modular, con diseño corporativo, tema claro y
+oscuro, y funcionamiento sin conexión (las fuentes van incluidas).
 
-## Flujo de la aplicación
+## Flujo de trabajo
 
-1. **Selector de proyecto** — crear/abrir/borrar proyectos (persistidos en
-   `localStorage`).
-2. **Paso 1 · Señales** — definir señales (Sensor, Motor, Cilindro, Virtual),
-   su estado inicial, descripción e inductivos para cilindros.
-3. **Paso 2 · Reglas** — constructor de reglas con condiciones (flancos y
-   estados) y acciones (1 / 0 / alternar), organizadas en bloques.
-4. **Paso 3 · Simulación** — ejecutar la simulación temporal, ver el cronograma
-   de ondas y generar el código AWL y KOP.
+| Paso | Sección | Qué hace |
+| --- | --- | --- |
+| 1 | **Señales** | Sensores, motores, cilindros (con inductivos de posición) y marcas. Validación de nombres en línea; al renombrar una señal se actualizan las reglas que la usan. |
+| 2 | **Lógica** | Reglas agrupadas en bloques. Condiciones por nivel (=1 / =0) o flanco (↑ / ↓); acciones SET, RESET o alternar. Reordenar, duplicar, avisos de señales inexistentes. |
+| 3 | **Simulación** | Escenario automático o **panel manual** interactivo. Cronograma con flechas causa → efecto y registro de ciclos. Detecta lógica que oscila. |
+| 4 | **Código PLC** | AWL con resaltado, esquema de contactos gráfico y tabla de símbolos (E/A/M). Copiar y descargar `.awl`, `.svg`, `.csv`. |
+| 5 | **Documentación** | Portada con índice y una hoja A3 por bloque (tabla de señales, cronograma, cajetín). Imprimir / guardar en PDF o descargar SVG. |
+
+Los proyectos se **guardan automáticamente** en el navegador y se pueden
+exportar/importar como `.json`. Los proyectos creados con el prototipo original
+siguen apareciendo y se abren sin cambios.
+
+## Modelo de simulación
+
+Replica un ciclo de PLC y es equivalente al AWL generado:
+
+1. Los flancos se detectan al **inicio del ciclo** (memoria de flanco).
+2. Las reglas se evalúan en orden; las condiciones de nivel leen el valor vivo.
+3. Las acciones son enclavadas (SET/RESET) o alternan.
+4. Los inductivos de los cilindros se actualizan al **final del ciclo**
+   (activo = cilindro, reposo = inverso), lo que encadena secuencias.
+
+Tras cada cambio externo se ejecutan ciclos hasta que el sistema se estabiliza.
+
+## Correcciones respecto al prototipo
+
+- **AWL**: la lógica estaba invertida (saltaba a «no cumple» cuando la
+  condición sí se cumplía) y los flancos no estaban implementados. Ahora se
+  genera lógica de bits (`U`/`UN`, `FP`/`FN`, `S`/`R`) con memorias de flanco.
+- **Inductivos**: nunca tenían valor en la simulación; ahora siguen al cilindro.
+- **Reacciones en cadena**: una acción que provocaba un flanco no se detectaba.
+- **Editar regla**: cancelar la edición borraba la regla.
+- **Seguridad**: los nombres se insertaban como HTML sin escapar.
+- Diálogos nativos (`alert`, `confirm`, `prompt`) sustituidos por avisos y
+  ventanas integradas; guardado manual sustituido por autoguardado.
 
 ## Estructura
 
 ```
 src/
-  types.ts            Modelo de dominio tipado (Signal, Rule, Block, ...)
-  state/store.ts      Estado global + persistencia en localStorage
+  types.ts              Modelo de dominio
+  state/store.ts        Estado, autoguardado, import/export
   plc/
-    simulation.ts     Motor de simulación (funciones puras)
-    awl.ts            Generación de código AWL
-    kop.ts            Generación de código KOP (Ladder)
-  diagram/timing.ts   Cronograma temporal en SVG
-  data/example.ts     Ejemplo industrial precargado
-  ui/
-    app.ts            Controlador y navegación
-    projects.ts       Selector de proyectos
-    signals.ts        Paso 1
-    rules.ts          Paso 2
-    simulation.ts     Paso 3
-    dom.ts            Helpers de DOM
-  main.ts             Punto de entrada
-  styles.css          Estilos (paleta original conservada)
+    signals.ts          Inductivos derivados, validación, entradas libres
+    simulation.ts       Motor por ciclos y escenario automático
+    awl.ts              Generador AWL
+    kop.ts              Modelo de escalera y KOP en texto
+    addresses.ts        Tabla de símbolos y direcciones
+  diagram/
+    wave.ts             Dibujo de ondas y flechas (común)
+    timing.ts           Cronograma en pantalla
+    ladder.ts           Esquema de contactos en SVG
+    sheet.ts            Hojas A3 con cajetín y portada
+  ui/                   Armazón, componentes y una vista por paso
+  data/example.ts       Proyecto de ejemplo (estación de transferencia)
+  styles.css, fonts.css Sistema de diseño (IBM Plex, tema claro/oscuro)
+tests/                  Tests de simulación, código y persistencia
 ```
 
 ## Scripts
@@ -49,19 +75,12 @@ src/
 ```bash
 npm install
 npm run dev        # servidor de desarrollo
+npm test           # tests (Vitest)
 npm run build      # type-check + build de producción
-npm run preview    # sirve la build de producción
-npm run typecheck  # solo comprobación de tipos
+npm run preview    # sirve la build
 ```
 
-## Alcance de esta fase
+## Pendiente
 
-Se ha migrado el **núcleo**: proyectos, señales, reglas/bloques, simulación,
-cronograma temporal y generación AWL/KOP, conservando la lógica del prototipo.
-
-Pendiente para una segunda fase (presente en el prototipo original):
-
-- Plantilla industrial normalizada con cajetín (Page name, Designer,
-  Installation `=`, Location `+`, ...).
-- Editor de dibujo SVG (formas, líneas/flechas, pincel, texto, imágenes).
-- Exportación a PDF multipágina.
+- Editor de dibujo libre sobre las hojas (presente en el prototipo).
+- Temporizadores (TON/TOF) y condiciones O (OR) en las reglas.

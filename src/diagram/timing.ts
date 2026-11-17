@@ -1,114 +1,88 @@
 /**
- * Diagrama temporal (cronograma de ondas) generado a partir de los datos de
- * simulación.
- *
- * En el index.html original el cronograma se dibujaba dentro de la "plantilla
- * industrial" con cajetín normalizado. Para esta primera fase (núcleo) se
- * genera un cronograma limpio y autónomo en SVG; la plantilla industrial
- * completa y la exportación a PDF quedan para una segunda fase.
+ * Cronograma en pantalla: etiquetas de señal a la izquierda y ondas a la
+ * derecha, con colores tomados de las variables CSS del tema (claro/oscuro).
  */
 
-import type { Signal, SimStep } from '../types';
+import type { Rule, Signal, SimStep } from '../types';
+import { esc } from '../ui/dom';
+import { actionTargets, derivedSignals } from '../plc/signals';
+import { drawWaves, type Paint, type WaveRow } from './wave';
 
-const ROW_H = 44; // alto por señal
-const TOP = 30; // margen superior
-const LABEL_W = 160; // ancho de la columna de etiquetas
-const STEP_W = 46; // ancho por paso temporal
-const HIGH = 8; // desplazamiento vertical del nivel alto
-const LOW = 32; // desplazamiento vertical del nivel bajo
+export const SCREEN_PAINT: Paint = {
+  grid: 'var(--td-grid, #E3E7EB)',
+  gridStrong: 'var(--td-grid-strong, #B9C2CA)',
+  text: 'var(--ink, #16212B)',
+  muted: 'var(--ink-3, #7A8794)',
+  wave: {
+    in: 'var(--td-in, #2B7A78)',
+    out: 'var(--td-out, #1E4F7A)',
+    mark: 'var(--td-mark, #6A5A8C)',
+    derived: 'var(--td-derived, #5C8F8D)',
+  },
+  fill: 'currentColor',
+  fillOpacity: 0.1,
+  arrow: 'var(--td-arrow, #C27803)',
+  event: 'var(--td-event, #C27803)',
+  font: "'IBM Plex Sans', system-ui, sans-serif",
+  mono: "'IBM Plex Mono', ui-monospace, monospace",
+};
 
-function esc(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+/** Filas del cronograma: señales en orden, con sus inductivos debajo. */
+export function buildRows(signals: Signal[], rules: Rule[], only?: Set<string>): WaveRow[] {
+  const targets = actionTargets(rules);
+  const derived = derivedSignals(signals);
+  const rows: WaveRow[] = [];
+  signals.forEach((s) => {
+    if (!only || only.has(s.name)) {
+      const kind: WaveRow['kind'] =
+        s.type === 'Virtual' ? 'mark' : s.type === 'Sensor' && !targets.has(s.name) ? 'in' : 'out';
+      rows.push({ name: s.name, kind });
+    }
+    derived
+      .filter((d) => d.source === s.name && (!only || only.has(d.name)))
+      .forEach((d) => rows.push({ name: d.name, kind: 'derived' }));
+  });
+  return rows;
 }
 
-/**
- * Devuelve el marcado SVG de un cronograma con una fila por señal.
- */
+const KIND_TAG: Record<WaveRow['kind'], string> = {
+  in: 'ENT',
+  out: 'SAL',
+  mark: 'MARCA',
+  derived: 'IND',
+};
+
 export function renderTimingDiagram(
-  signals: Signal[],
-  simulationData: SimStep[],
+  rows: WaveRow[],
+  history: SimStep[],
+  opts: { stepW?: number; highlightStep?: number; arrows?: boolean } = {},
 ): string {
-  if (signals.length === 0 || simulationData.length === 0) {
-    return '<p class="diagram-empty">No hay datos de simulación. Ejecuta la simulación primero.</p>';
+  if (!rows.length || !history.length) {
+    return '<p class="empty-inline">No hay datos de simulación.</p>';
   }
+  const labelW = 188;
+  const rowH = 38;
+  const stepW = opts.stepW ?? Math.max(26, Math.min(44, Math.floor(1100 / history.length)));
+  const width = labelW + history.length * stepW + 16;
+  const height = 22 + rows.length * rowH + 8;
 
-  const steps = simulationData.length;
-  const width = LABEL_W + steps * STEP_W + 20;
-  const height = TOP + signals.length * ROW_H + 20;
+  const labels = rows
+    .map((r, i) => {
+      const y = 22 + i * rowH + rowH / 2;
+      return `<g class="td-label"><text x="12" y="${y + 4}" style="font:500 12.5px ${SCREEN_PAINT.mono};fill:${SCREEN_PAINT.text}">${esc(r.name)}</text><text x="${labelW - 12}" y="${y + 4}" text-anchor="end" style="font:600 9px ${SCREEN_PAINT.font};letter-spacing:.06em;fill:${SCREEN_PAINT.wave[r.kind]}">${KIND_TAG[r.kind]}</text></g>`;
+    })
+    .join('');
 
-  const parts: string[] = [];
-  parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="timing-svg">`,
+  const waves = drawWaves(
+    rows,
+    history,
+    { x: labelW, y: 0, rowH, stepW, timeHeader: true },
+    SCREEN_PAINT,
+    { arrows: opts.arrows, markerId: 'td-ah', highlightStep: opts.highlightStep },
   );
 
-  // Rejilla vertical + etiquetas de tiempo.
-  for (let i = 0; i < steps; i++) {
-    const x = LABEL_W + i * STEP_W;
-    parts.push(
-      `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${
-        height - 20
-      }" stroke="#e2e8f0" stroke-width="1" />`,
-    );
-    parts.push(
-      `<text x="${x + STEP_W / 2}" y="${
-        TOP - 12
-      }" text-anchor="middle" font-size="11" fill="#718096">t${
-        simulationData[i].time
-      }</text>`,
-    );
-  }
-  const xEnd = LABEL_W + steps * STEP_W;
-  parts.push(
-    `<line x1="${xEnd}" y1="${TOP}" x2="${xEnd}" y2="${
-      height - 20
-    }" stroke="#e2e8f0" stroke-width="1" />`,
-  );
-
-  // Una fila por señal.
-  signals.forEach((signal, row) => {
-    const rowY = TOP + row * ROW_H;
-    const yHigh = rowY + HIGH;
-    const yLow = rowY + LOW;
-
-    parts.push(
-      `<text x="8" y="${
-        rowY + ROW_H / 2
-      }" font-size="13" font-weight="600" fill="#2d3748">${esc(
-        signal.name,
-      )}</text>`,
-    );
-    parts.push(
-      `<line x1="${LABEL_W}" y1="${rowY + ROW_H}" x2="${xEnd}" y2="${
-        rowY + ROW_H
-      }" stroke="#edf2f7" stroke-width="1" />`,
-    );
-
-    // Construir la polilínea de la onda.
-    const pts: string[] = [];
-    let prevY = simulationData[0].states[signal.name] === 1 ? yHigh : yLow;
-    for (let i = 0; i < steps; i++) {
-      const x = LABEL_W + i * STEP_W;
-      const level = simulationData[i].states[signal.name] === 1 ? yHigh : yLow;
-      if (level !== prevY && i > 0) {
-        // Flanco vertical en el instante del cambio.
-        pts.push(`${x},${prevY}`);
-        pts.push(`${x},${level}`);
-      } else {
-        pts.push(`${x},${level}`);
-      }
-      pts.push(`${x + STEP_W},${level}`);
-      prevY = level;
-    }
-    parts.push(
-      `<polyline points="${pts.join(
-        ' ',
-      )}" fill="none" stroke="#395b8b" stroke-width="2" />`,
-    );
-  });
-
-  parts.push('</svg>');
-  return parts.join('\n');
+  return `<svg class="timing-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Cronograma de señales">
+  <text x="12" y="14" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">SEÑAL</text>
+  <text x="${labelW - 12}" y="14" text-anchor="end" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">CICLO →</text>
+  ${labels}${waves}</svg>`;
 }

@@ -1,55 +1,87 @@
 /**
- * Generación de código KOP (diagrama de contactos / Ladder), solo AND en serie.
+ * KOP (esquema de contactos / Ladder).
  *
- * Portado de `generateKOP()` del index.html original.
+ * `ladderModel` traduce las reglas a segmentos (una network por regla, con los
+ * contactos en serie y las bobinas en paralelo). Lo consumen la vista de texto
+ * y el renderizador gráfico (diagram/ladder.ts).
  */
 
-import type { Block } from '../types';
+import type { Block, ConditionEvent, ActionValue } from '../types';
 
-export function generateKOP(blocks: Block[]): string {
-  let kop = '';
-  let rungCounter = 1;
+export type ContactKind = 'NO' | 'NC' | 'P' | 'N';
+export type CoilKind = 'S' | 'R' | 'T';
 
-  blocks.forEach((bloque) => {
-    if (!bloque.rules || bloque.rules.length === 0) return;
+export interface LadderContact {
+  signal: string;
+  kind: ContactKind;
+}
 
-    kop += `// ==== BLOQUE: ${bloque.name} ====\n\n`;
+export interface LadderCoil {
+  signal: string;
+  kind: CoilKind;
+}
 
-    bloque.rules.forEach((rule) => {
-      if (!rule.actions || rule.actions.length === 0) return;
+export interface LadderRung {
+  number: number;
+  title: string;
+  block: string;
+  contacts: LadderContact[];
+  coils: LadderCoil[];
+}
 
-      const serieCondiciones = rule.conditions
-        .map((c) => {
-          switch (c.event) {
-            case '==1':
-              return `[ ${c.signal} ]`;
-            case '==0':
-              return `[ /${c.signal} ]`;
-            case 'Flanco ascendente':
-              return `((↑: ${c.signal}))`;
-            case 'Flanco descendente':
-              return `((↓: ${c.signal}))`;
-            default:
-              return `(/*${c.event}: ${c.signal}*/)`;
-          }
-        })
-        .join('──');
+const CONTACT: Record<ConditionEvent, ContactKind> = {
+  '==1': 'NO',
+  '==0': 'NC',
+  'Flanco ascendente': 'P',
+  'Flanco descendente': 'N',
+};
 
-      rule.actions.forEach((act) => {
-        let coilText: string;
-        if (act.value === '1') coilText = `( SET ${act.signal} )`;
-        else if (act.value === '0') coilText = `( RESET ${act.signal} )`;
-        else if (act.value === 'toggle') coilText = `[ TOGGLE ${act.signal} ]`;
-        else coilText = `( ${act.signal} )`;
+const COIL: Record<ActionValue, CoilKind> = { '1': 'S', '0': 'R', toggle: 'T' };
 
-        kop += `Rung ${rungCounter}:\n`;
-        kop += `    ${serieCondiciones}──${coilText}\n\n`;
-        rungCounter++;
+export function ladderModel(blocks: Block[]): LadderRung[] {
+  const rungs: LadderRung[] = [];
+  blocks.forEach((b) =>
+    (b.rules || []).forEach((r) => {
+      if (!r.actions.length) return;
+      rungs.push({
+        number: rungs.length + 1,
+        title: r.name,
+        block: b.name,
+        contacts: r.conditions.map((c) => ({ signal: c.signal, kind: CONTACT[c.event] })),
+        coils: r.actions.map((a) => ({ signal: a.signal, kind: COIL[a.value] })),
       });
+    }),
+  );
+  return rungs;
+}
+
+const CONTACT_TXT: Record<ContactKind, (s: string) => string> = {
+  NO: (s) => `─┤ ├─ ${s}`,
+  NC: (s) => `─┤/├─ ${s}`,
+  P: (s) => `─┤P├─ ${s}`,
+  N: (s) => `─┤N├─ ${s}`,
+};
+
+const COIL_TXT: Record<CoilKind, string> = { S: '(S)', R: '(R)', T: '(T)' };
+
+/** Representación de texto del esquema de contactos. */
+export function generateKOP(blocks: Block[]): string {
+  const rungs = ladderModel(blocks);
+  if (!rungs.length) return '// (sin reglas con acciones)\n';
+  const out: string[] = [];
+  let block = '';
+  rungs.forEach((rg) => {
+    if (rg.block !== block) {
+      block = rg.block;
+      out.push(`// ==== BLOQUE: ${block} ====`, '');
+    }
+    out.push(`Network ${rg.number}: ${rg.title}`);
+    const series = rg.contacts.map((c) => CONTACT_TXT[c.kind](c.signal)).join('  ');
+    rg.coils.forEach((c, i) => {
+      const lead = i === 0 ? `  ║${series}  ` : `  ║${' '.repeat(series.length + 2)}`;
+      out.push(`${lead}──${COIL_TXT[c.kind]} ${c.signal}`);
     });
-
-    kop += `// ==== FIN DE BLOQUE: ${bloque.name} ====\n\n`;
+    out.push('');
   });
-
-  return kop;
+  return out.join('\n');
 }
