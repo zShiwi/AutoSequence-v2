@@ -177,7 +177,7 @@ export function renderSimulation(app: App): HTMLElement {
       toast(ui.mode === 'auto' ? 'Escenario recalculado.' : 'Simulación reiniciada al estado inicial.', 'info');
     } else if (act === 'svg') {
       const svg = body.querySelector('[data-slot="diagram"] svg');
-      if (svg) download(`${slug(p.name)}-cronograma.svg`, standaloneSvg(svg.outerHTML), 'image/svg+xml');
+      if (svg) void download(`${slug(p.name)}-cronograma.svg`, standaloneSvg(svg.outerHTML), 'image/svg+xml');
       return;
     } else return;
     draw();

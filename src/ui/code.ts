@@ -133,12 +133,12 @@ export function renderCode(app: App): HTMLElement {
     if (act === 'copy') {
       toast((await copyText(awl)) ? 'AWL copiado al portapapeles.' : 'No se pudo copiar.', 'info');
     } else if (act === 'dl-awl') {
-      download(`${base}-OB1.awl`, awl);
+      void download(`${base}-OB1.awl`, awl);
     } else if (act === 'dl-kop') {
-      if (kopAsText) download(`${base}-kop.txt`, generateKOP(p.blocks));
-      else download(`${base}-kop.svg`, standaloneSvg(renderLadder(rungs, symbols).svg), 'image/svg+xml');
+      if (kopAsText) void download(`${base}-kop.txt`, generateKOP(p.blocks));
+      else void download(`${base}-kop.svg`, standaloneSvg(renderLadder(rungs, symbols).svg), 'image/svg+xml');
     } else if (act === 'dl-csv') {
-      download(`${base}-simbolos.csv`, '﻿' + symbolTableCSV(symbols), 'text/csv;charset=utf-8');
+      void download(`${base}-simbolos.csv`, '﻿' + symbolTableCSV(symbols), 'text/csv;charset=utf-8');
     }
   });
   body.addEventListener('change', (e) => {

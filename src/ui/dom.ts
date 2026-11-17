@@ -242,7 +242,49 @@ export function promptDialog(
 
 // ---- Descargas ------------------------------------------------------------
 
-export function download(filename: string, content: string, mime = 'text/plain;charset=utf-8'): void {
+interface ViewerDownloads {
+  save(req: { filename: string; data: string | Blob }): Promise<{ status: 'saved' | 'delivered' }>;
+}
+interface ViewerBridge {
+  use(name: 'downloads'): Promise<ViewerDownloads | null>;
+}
+
+/** Extensiones que el visor de claude.ai acepta al guardar archivos. */
+const VIEWER_EXT = /\.(txt|json|md|csv|svg|html|pdf|png|jpg|jpeg|zip)$/i;
+
+/**
+ * Descarga un archivo generado. Dentro del visor de claude.ai usa su
+ * mecanismo de descargas (el visor bloquea los enlaces normales); fuera de
+ * él, un enlace de descarga del navegador.
+ */
+export async function download(
+  filename: string,
+  content: string,
+  mime = 'text/plain;charset=utf-8',
+  okMessage?: string,
+): Promise<boolean> {
+  const bridge = (window as unknown as { claude?: ViewerBridge }).claude;
+  if (bridge?.use) {
+    const dl = await bridge.use('downloads').catch(() => null);
+    if (dl) {
+      const name = VIEWER_EXT.test(filename) ? filename : `${filename}.txt`;
+      try {
+        await dl.save({ filename: name, data: content });
+        if (okMessage) toast(okMessage);
+        return true;
+      } catch (e) {
+        const code = (e as { code?: string })?.code;
+        if (code === 'declined') return false;
+        toast(
+          code === 'rate_limited'
+            ? 'Ya hay una descarga pendiente de confirmar.'
+            : 'No se pudo descargar el archivo en esta vista.',
+          'warn',
+        );
+        return false;
+      }
+    }
+  }
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -252,6 +294,8 @@ export function download(filename: string, content: string, mime = 'text/plain;c
   a.click();
   a.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (okMessage) toast(okMessage);
+  return true;
 }
 
 export function slug(text: string): string {

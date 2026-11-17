@@ -178,8 +178,7 @@ export class App {
       const p = session.project;
       if (!p) return;
       flushSave();
-      download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json');
-      toast('Proyecto exportado como JSON.');
+      void download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json', 'Proyecto exportado como JSON.');
     });
     this.root.querySelector('[data-act="rename"]')?.addEventListener('click', async () => {
       const p = session.project;

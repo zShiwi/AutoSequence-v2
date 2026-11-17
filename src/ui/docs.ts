@@ -73,6 +73,23 @@ export function buildSheets(p: Project): Sheet[] {
   return [cover, ...sheets];
 }
 
+/** Documento HTML autónomo con todas las hojas, una por página A3. */
+function printableHtml(title: string, svgs: string[]): string {
+  return `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>${esc(title)} · Documentación</title>
+<style>
+@page { size: A3 landscape; margin: 0; }
+html, body { margin: 0; background: #e9ecef; }
+.page { width: 420mm; height: 297mm; margin: 12px auto; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); break-after: page; }
+.page:last-child { break-after: auto; }
+.page svg { display: block; width: 100%; height: 100%; }
+@media print { html, body { background: #fff; } .page { margin: 0; box-shadow: none; } }
+</style></head><body>
+${svgs.map((s) => `<div class="page">${s}</div>`).join('\n')}
+</body></html>
+`;
+}
+
 export function renderDocs(app: App): HTMLElement {
   const p = project();
   const page = h(`
@@ -84,6 +101,7 @@ export function renderDocs(app: App): HTMLElement {
           <p class="lede">Hojas A3 apaisadas con la plantilla industrial: portada con índice y un diagrama funcional por bloque, con tabla de señales y cajetín.</p>
         </div>
         <div class="page-head__actions">
+          <button class="btn btn--ghost" data-act="html" title="Documento completo para abrir en el navegador e imprimir">${icon('download', 16)}<span>Documento .html</span></button>
           <button class="btn btn--primary" data-act="print">${icon('printer', 16)}<span>Imprimir / Guardar PDF</span></button>
         </div>
       </header>
@@ -143,7 +161,7 @@ export function renderDocs(app: App): HTMLElement {
     const d = t.closest<HTMLElement>('[data-svg]')?.dataset.svg;
     if (d !== undefined) {
       const s = sheets[Number(d)];
-      download(`${slug(p.name)}-hoja-${Number(d) + 1}-${slug(s.title)}.svg`, standaloneSvg(s.svg), 'image/svg+xml');
+      void download(`${slug(p.name)}-hoja-${Number(d) + 1}-${slug(s.title)}.svg`, standaloneSvg(s.svg), 'image/svg+xml');
     } else if (v !== undefined) {
       const s = sheets[Number(v)];
       const m = modal({
@@ -173,6 +191,14 @@ export function renderDocs(app: App): HTMLElement {
       cleanup();
       toast('La impresión está bloqueada aquí. Descarga las hojas en SVG.', 'warn', 6000);
     }
+  });
+  qs(page, '[data-act="html"]').addEventListener('click', () => {
+    void download(
+      `${slug(p.name)}-documentacion.html`,
+      printableHtml(p.name, sheets.map((s) => s.svg)),
+      'text/html;charset=utf-8',
+      'Documento descargado. Ábrelo en el navegador e imprime en A3 horizontal.',
+    );
   });
   qs(page, '[data-act="prev"]').addEventListener('click', () => app.go('code'));
 

@@ -121,8 +121,7 @@ export function renderHome(app: App): HTMLElement {
           if (copy) toast(`Creado «${copy.name}».`);
           draw();
         } else if (act === 'exp') {
-          download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json');
-          toast('Proyecto exportado.');
+          void download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json', 'Proyecto exportado.');
         } else if (act === 'del') {
           const ok = await confirmDialog(
             'Eliminar proyecto',
