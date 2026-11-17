@@ -9,7 +9,7 @@
 import type { Cajetin, SimStep } from '../types';
 import { esc } from '../ui/dom';
 import { addressOf, type SymbolEntry } from '../plc/addresses';
-import { drawWaves, type Paint, type WaveRow } from './wave';
+import { computeEffects, drawWaves, type Paint, type WaveRow } from './wave';
 
 export const SHEET_W = 1587;
 export const SHEET_H = 1122;
@@ -23,13 +23,22 @@ const PAPER: Paint = {
   text: '#000000',
   muted: '#555555',
   wave: { in: '#000000', out: '#000000', mark: '#3A3A3A', derived: '#4A4A4A' },
-  fill: '#000000',
   fillOpacity: 0.07,
-  arrow: '#9C3A00',
-  event: '#9C3A00',
+  event: '#000000',
+  link: '#000000',
+  tagFill: '#FFFFFF',
+  tagStroke: '#000000',
+  tagText: '#000000',
   font: FONT,
   mono: MONO,
 };
+
+/** Línea de la leyenda de reglas de una hoja. */
+export interface RuleLegend {
+  label: string;
+  name: string;
+  logic: string;
+}
 
 function wrapWords(text: string, max: number): string[] {
   const lines: string[] = [];
@@ -148,10 +157,18 @@ export function renderSheet(
   symbols: SymbolEntry[],
   descriptions: Record<string, string>,
   initial: Record<string, number>,
-  meta: SheetMeta & { blockTitle: string; ruleCount: number },
+  meta: SheetMeta & {
+    blockTitle: string;
+    ruleCount: number;
+    legend: RuleLegend[];
+    ruleLabel: (ruleId: number | string, ruleIndex: number) => string;
+  },
 ): string {
   const out: string[] = [frame()];
-  const rowH = Math.min(56, 940 / Math.max(rows.length, 1));
+  // Leyenda de reglas al pie del área de diagrama; las filas usan el resto.
+  const legendLines = meta.legend.slice(0, 14);
+  const legendH = legendLines.length ? 34 + legendLines.length * 19 : 0;
+  const rowH = Math.min(56, (940 - legendH - 16) / Math.max(rows.length, 1));
   const tableTop = 40;
 
   // Tabla de señales.
@@ -187,12 +204,29 @@ export function renderSheet(
   const stepW = 1082 / Math.max(history.length, 1);
   out.push(
     drawWaves(rows, history, { x: 480, y: 58, rowH, stepW, timeHeader: true }, PAPER, {
-      arrows: true,
       markerId: `sh-ah-${meta.page}`,
+      effects: computeEffects(rows, history, meta.ruleLabel),
+      links: 'all',
     }),
   );
   if (!rows.length) {
     out.push(txt(1020, 500, 'Este bloque no tiene reglas: no hay señales que documentar.', { size: 14, anchor: 'middle', color: '#666', italic: true }));
+  }
+
+  if (legendLines.length) {
+    const ly = 1020 - legendH;
+    out.push(`<line x1="465" y1="${ly}" x2="1572" y2="${ly}" style="stroke:#000;stroke-width:1"/>`);
+    out.push(txt(480, ly + 20, 'REGLAS DEL BLOQUE', { size: 10, weight: 700, color: '#333' }));
+    legendLines.forEach((l, i) => {
+      const y = ly + 40 + i * 19;
+      out.push(`<rect x="480" y="${y - 11}" width="${8 + l.label.length * 6.4}" height="15" rx="7.5" style="fill:#fff;stroke:#000;stroke-width:1"/>`);
+      out.push(txt(484 + (l.label.length * 6.4) / 2, y + 0.5, l.label, { size: 9.5, weight: 600, mono: true, anchor: 'middle' }));
+      out.push(txt(522, y, clip(l.name, 34), { size: 11, weight: 600 }));
+      out.push(txt(760, y, clip(l.logic, 118), { size: 10.5, mono: true, color: '#222' }));
+    });
+    if (meta.legend.length > legendLines.length) {
+      out.push(txt(1562, ly + 20, `+${meta.legend.length - legendLines.length} reglas más (ver código PLC)`, { size: 10, anchor: 'end', color: '#555' }));
+    }
   }
 
   out.push(titleBlock(meta));

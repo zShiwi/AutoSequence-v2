@@ -112,7 +112,7 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
     }
     const flag = bitAddress('M', idx, RULE_FLAG_BYTE);
     out.push(`NETWORK // ${network++}`);
-    out.push(`TITLE = ${r.name}`);
+    out.push(`TITLE = R${idx + 1} · ${r.name}`);
     r.conditions.forEach((c) => out.push(condLine(c)));
     out.push(line('=', flag, 'regla activa'));
 

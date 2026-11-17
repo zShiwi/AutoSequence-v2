@@ -76,6 +76,33 @@ describe('Simulator', () => {
     expect(sim.warnings.length).toBe(1);
   });
 
+  it('detecta conflictos SET/RESET y no registra cambios inexistentes', () => {
+    const rules: Rule[] = [
+      {
+        id: 1,
+        name: 'Bajar',
+        conditions: [{ signal: 'a', event: '==1', delay: 0, operator: 'AND' }],
+        actions: [{ signal: 'y', value: '1' }],
+      },
+      {
+        id: 2,
+        name: 'Subir',
+        conditions: [{ signal: 'b', event: '==1', delay: 0, operator: 'AND' }],
+        actions: [{ signal: 'y', value: '0' }],
+      },
+    ];
+    const sim = new Simulator([S('a'), S('b'), S('y', 'Motor')], rules);
+    sim.apply([{ signal: 'a', value: 1 }]);
+    expect(sim.states.y).toBe(1);
+    sim.apply([{ signal: 'b', value: 1 }]);
+    sim.idle();
+    // Ambas reglas activas: y se escribe a 1 y a 0 en cada ciclo y no cambia.
+    expect(sim.states.y).toBe(0);
+    const after = sim.history.slice(-1)[0];
+    expect(after.activations).toEqual([]);
+    expect(sim.warnings.some((w) => w.startsWith('Conflicto en «y»'))).toBe(true);
+  });
+
   it('el escenario automático ejercita todas las reglas del ejemplo', () => {
     const rules = exampleBlocks().flatMap((b) => b.rules);
     const sim = runAutoScenario(exampleSignals(), rules);
@@ -132,5 +159,26 @@ describe('Validación de señales', () => {
     expect(validateSignalName('VI-2-SCT1')).toBeNull();
     const clean = cleanSignals([S('a'), S('a'), S(''), S('mal nombre'), S('b')]);
     expect(clean.map((s) => s.name)).toEqual(['a', 'b']);
+  });
+});
+
+describe('Relaciones causa → efecto del cronograma', () => {
+  it('atribuye cada cambio al flanco que vio la regla, no a su consecuencia', async () => {
+    const { computeEffects } = await import('../src/diagram/wave');
+    const { buildRows } = await import('../src/diagram/timing');
+    const signals = exampleSignals();
+    const rules = exampleBlocks().flatMap((b) => b.rules);
+    const sim = new Simulator(signals, rules);
+    sim.apply([{ signal: 'B1_pieza', value: 1 }]);
+    sim.apply([{ signal: 'S1_marcha', value: 1 }]);
+    const fx = computeEffects(buildRows(signals, rules), sim.history, (_, i) => `R${i + 1}`);
+    const r3 = fx.find((e) => e.label === 'R3')!;
+    expect(r3.trigger).toBe('A_ext');
+    expect(r3.triggerEdge).toBe('↑');
+    expect(r3.triggerStep).toBe(r3.step - 1);
+    const r1 = fx.find((e) => e.label === 'R1')!;
+    expect(r1.trigger).toBe('S1_marcha');
+    expect(r1.triggerEdge).toBe('↑');
+    expect(r1.triggerStep).toBe(r1.step);
   });
 });

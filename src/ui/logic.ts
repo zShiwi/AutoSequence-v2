@@ -83,6 +83,7 @@ export function renderLogic(app: App): HTMLElement {
       <button class="icon-btn icon-btn--danger" data-act="block-delete" title="Eliminar bloque" aria-label="Eliminar bloque"${p.blocks.length < 2 ? ' disabled' : ''}>${icon('trash', 16)}</button>`;
 
     const block = p.blocks[activeBlock];
+    const offset = p.blocks.slice(0, activeBlock).reduce((n, b) => n + b.rules.length, 0);
     if (!block.rules.length) {
       list.innerHTML = `
         <div class="empty empty--compact">
@@ -100,7 +101,7 @@ export function renderLogic(app: App): HTMLElement {
             r.conditions.some((c) => !known.has(c.signal)) || r.actions.some((a) => !known.has(a.signal));
           return `
           <li class="rule${missing ? ' rule--warn' : ''}" data-i="${i}">
-            <div class="rule__num">${i + 1}</div>
+            <div class="rule__num" title="Número de regla en todo el programa (= Network ${offset + i + 1} del KOP)">R${offset + i + 1}</div>
             <div class="rule__main">
               <div class="rule__title">${esc(r.name)}${missing ? `<span class="badge badge--warn">${icon('alert', 13)}Señal inexistente</span>` : ''}</div>
               <div class="rule__logic">

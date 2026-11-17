@@ -51,6 +51,10 @@
   --td-derived: var(--t-derived);
   --td-arrow: #c27803;
   --td-event: #c27803;
+  --td-link: #5d6b78;
+  --td-tag-bg: #ffffff;
+  --td-tag-line: #9aa6b1;
+  --td-tag-ink: #16212b;
 
   --lad-ink: #16212b;
   --lad-muted: #6b7884;
@@ -104,6 +108,10 @@
     --td-grid-strong: #3e4c59;
     --td-arrow: #f2b42c;
     --td-event: #f2b42c;
+    --td-link: #9aa8b4;
+    --td-tag-bg: #151e26;
+    --td-tag-line: #56646f;
+    --td-tag-ink: #e4eaef;
     --lad-ink: #dfe6ec;
     --lad-muted: #8b98a4;
     --lad-accent: #7fb3e3;
@@ -148,6 +156,10 @@
   --td-grid-strong: #3e4c59;
   --td-arrow: #f2b42c;
   --td-event: #f2b42c;
+  --td-link: #9aa8b4;
+  --td-tag-bg: #151e26;
+  --td-tag-line: #56646f;
+  --td-tag-ink: #e4eaef;
   --lad-ink: #dfe6ec;
   --lad-muted: #8b98a4;
   --lad-accent: #7fb3e3;
@@ -1589,9 +1601,87 @@ select.input {
 }
 
 .diagram-scroll {
+  position: relative;
   overflow-x: auto;
   padding: 14px 6px 10px;
   background: var(--surface);
+}
+
+/* Relaciones causa → efecto del cronograma */
+.fx-link--hover {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.fx-link.is-active {
+  opacity: 1;
+}
+
+.fx-link.is-active line {
+  stroke: var(--accent) !important;
+  stroke-width: 1.8 !important;
+}
+
+.fx-link.is-active circle {
+  fill: var(--accent) !important;
+}
+
+.fx-tag {
+  cursor: help;
+  outline: none;
+}
+
+.fx-tag.is-active rect {
+  fill: var(--accent-soft) !important;
+  stroke: var(--accent) !important;
+  stroke-width: 1.5 !important;
+}
+
+.fx-tag:focus-visible rect {
+  stroke: var(--primary) !important;
+  stroke-width: 2 !important;
+}
+
+.fx-tip {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  gap: 2px;
+  padding: 7px 11px;
+  border-radius: var(--r);
+  background: var(--topbar);
+  color: #eef3f7;
+  font-size: 12.5px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+}
+
+.fx-tip span {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #b8c6d2;
+}
+
+.fx-chip {
+  display: inline-block;
+  min-width: 24px;
+  margin-right: 7px;
+  padding: 0 6px;
+  border: 1px solid var(--td-tag-line);
+  border-radius: 999px;
+  background: var(--td-tag-bg);
+  font: 600 10.5px/16px var(--mono);
+  color: var(--td-tag-ink);
+  text-align: center;
+  vertical-align: 1px;
+}
+
+.legend__tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ink-2);
 }
 
 .diagram-scroll--ladder {

@@ -5,6 +5,7 @@ import { runAutoScenario } from '../plc/simulation';
 import { buildSymbolTable } from '../plc/addresses';
 import { cleanSignals, derivedSignals, signalsUsedBy } from '../plc/signals';
 import { buildRows } from '../diagram/timing';
+import { ruleLabeler, ruleLogicText } from '../plc/rules';
 import { renderCover, renderSheet } from '../diagram/sheet';
 import { standaloneSvg } from '../diagram/ladder';
 import type { Cajetin, Project } from '../types';
@@ -41,6 +42,7 @@ export function buildSheets(p: Project): Sheet[] {
   );
   const pages = p.blocks.length + 1;
   const cajetin = p.cajetin ?? {};
+  const ruleLabel = ruleLabeler(p.blocks);
 
   const sheets: Sheet[] = [];
   p.blocks.forEach((b, i) => {
@@ -57,6 +59,12 @@ export function buildSheets(p: Project): Sheet[] {
         pageName: b.name,
         blockTitle: `${b.name} — Diagrama funcional`,
         ruleCount: b.rules.length,
+        ruleLabel,
+        legend: b.rules.map((r, ri) => ({
+          label: ruleLabel(r.id, ri),
+          name: r.name,
+          logic: ruleLogicText(r),
+        })),
       }),
     });
   });

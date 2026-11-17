@@ -6,7 +6,7 @@
 import type { Rule, Signal, SimStep } from '../types';
 import { esc } from '../ui/dom';
 import { actionTargets, derivedSignals } from '../plc/signals';
-import { drawWaves, type Paint, type WaveRow } from './wave';
+import { computeEffects, drawWaves, type LinkMode, type Paint, type WaveRow } from './wave';
 
 export const SCREEN_PAINT: Paint = {
   grid: 'var(--td-grid, #E3E7EB)',
@@ -19,10 +19,12 @@ export const SCREEN_PAINT: Paint = {
     mark: 'var(--td-mark, #6A5A8C)',
     derived: 'var(--td-derived, #5C8F8D)',
   },
-  fill: 'currentColor',
   fillOpacity: 0.1,
-  arrow: 'var(--td-arrow, #C27803)',
   event: 'var(--td-event, #C27803)',
+  link: 'var(--td-link, #44525F)',
+  tagFill: 'var(--td-tag-bg, #FFFFFF)',
+  tagStroke: 'var(--td-tag-line, #B9C2CA)',
+  tagText: 'var(--td-tag-ink, #16212B)',
   font: "'IBM Plex Sans', system-ui, sans-serif",
   mono: "'IBM Plex Mono', ui-monospace, monospace",
 };
@@ -55,14 +57,19 @@ const KIND_TAG: Record<WaveRow['kind'], string> = {
 export function renderTimingDiagram(
   rows: WaveRow[],
   history: SimStep[],
-  opts: { stepW?: number; highlightStep?: number; arrows?: boolean } = {},
+  opts: {
+    stepW?: number;
+    highlightStep?: number;
+    links?: LinkMode;
+    ruleLabel?: (ruleId: number | string, ruleIndex: number) => string;
+  } = {},
 ): string {
   if (!rows.length || !history.length) {
     return '<p class="empty-inline">No hay datos de simulación.</p>';
   }
   const labelW = 188;
   const rowH = 38;
-  const stepW = opts.stepW ?? Math.max(26, Math.min(44, Math.floor(1100 / history.length)));
+  const stepW = opts.stepW ?? Math.max(36, Math.min(48, Math.floor(1100 / history.length)));
   const width = labelW + history.length * stepW + 16;
   const height = 22 + rows.length * rowH + 8;
 
@@ -73,12 +80,13 @@ export function renderTimingDiagram(
     })
     .join('');
 
+  const effects = computeEffects(rows, history, opts.ruleLabel ?? ((_, i) => `R${i + 1}`));
   const waves = drawWaves(
     rows,
     history,
     { x: labelW, y: 0, rowH, stepW, timeHeader: true },
     SCREEN_PAINT,
-    { arrows: opts.arrows, markerId: 'td-ah', highlightStep: opts.highlightStep },
+    { markerId: 'td-ah', effects, links: opts.links ?? 'hover', highlightStep: opts.highlightStep },
   );
 
   return `<svg class="timing-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Cronograma de señales">

@@ -6,6 +6,7 @@ import { cleanSignals, signalsUsedBy, actionTargets } from '../plc/signals';
 import { buildRows, renderTimingDiagram } from '../diagram/timing';
 import { download, esc, h, icon, qs, slug, toast } from './dom';
 import { standaloneSvg } from '../diagram/ladder';
+import { ruleLabeler, type RuleLabeler } from '../plc/rules';
 import type { App } from './app';
 import type { SimStep } from '../types';
 
@@ -13,7 +14,7 @@ type Mode = 'auto' | 'manual';
 
 const ui = {
   mode: 'auto' as Mode,
-  arrows: true,
+  allLinks: false,
   filter: 'all' as string,
   sim: null as Simulator | null,
   signature: '',
@@ -23,6 +24,7 @@ export function renderSimulation(app: App): HTMLElement {
   const p = project();
   const signals = cleanSignals(p.signals);
   const rules = allRules();
+  const ruleLabel = ruleLabeler(p.blocks);
   const signature = JSON.stringify([p.id, signals, rules]);
   if (ui.signature !== signature) {
     ui.sim = null;
@@ -135,30 +137,61 @@ export function renderSimulation(app: App): HTMLElement {
               ${p.blocks.map((b, i) => `<option value="${i}"${String(i) === ui.filter ? ' selected' : ''}>Bloque: ${esc(b.name)}</option>`).join('')}
             </select>
           </label>
-          <label class="check"><input type="checkbox" data-act="arrows"${ui.arrows ? ' checked' : ''}/> Flechas causa → efecto</label>
+          <label class="check" title="Sin marcar, la relación de cada regla aparece al señalar su etiqueta"><input type="checkbox" data-act="links"${ui.allLinks ? ' checked' : ''}/> Mostrar todas las relaciones</label>
           <span class="toolbar__spacer"></span>
           <div class="legend" aria-label="Leyenda">
             <span class="legend__item legend__item--in">Entrada</span>
             <span class="legend__item legend__item--out">Salida</span>
             <span class="legend__item legend__item--mark">Marca</span>
             <span class="legend__item legend__item--derived">Inductivo</span>
+            <span class="legend__tag"><span class="fx-chip">R1</span>Regla que provoca el cambio</span>
           </div>
           <button class="btn btn--ghost btn--sm" data-act="svg" title="Descargar el cronograma como imagen SVG">${icon('download', 15)}<span>SVG</span></button>
           <button class="btn btn--ghost btn--sm" data-act="reset">${icon('reset', 15)}<span>${ui.mode === 'auto' ? 'Recalcular' : 'Reiniciar'}</span></button>
         </div>
         <div class="diagram-scroll" data-slot="diagram">${renderTimingDiagram(filterRows(), sim.history, {
-          arrows: ui.arrows,
+          links: ui.allLinks ? 'all' : 'hover',
+          ruleLabel,
           highlightStep: ui.mode === 'manual' ? sim.history.length - 1 : undefined,
-        })}</div>
+        })}<div class="fx-tip" role="tooltip" hidden></div></div>
       </div>
       <details class="card log"${ui.mode === 'manual' ? ' open' : ''}>
-        <summary><h2>Registro de ciclos</h2><span class="muted small">${countActivations(sim.history)} disparos de regla en ${sim.history.length} ciclos</span></summary>
-        ${logTable(sim.history)}
+        <summary><h2>Registro de ciclos</h2><span class="muted small">${countActivations(sim.history)} cambios provocados por reglas en ${sim.history.length} ciclos</span></summary>
+        ${logTable(sim.history, ruleLabel)}
       </details>`;
 
     const scroll = body.querySelector<HTMLElement>('[data-slot="diagram"]');
     if (scroll && ui.mode === 'manual') scroll.scrollLeft = scroll.scrollWidth;
   };
+
+  // Ficha y línea de relación al señalar la etiqueta de una regla.
+  const showFx = (tag: SVGGElement | null) => {
+    const host = body.querySelector<HTMLElement>('[data-slot="diagram"]');
+    if (!host) return;
+    host.querySelectorAll('.is-active').forEach((n) => n.classList.remove('is-active'));
+    const tip = host.querySelector<HTMLElement>('.fx-tip');
+    if (!tag || !tip) {
+      if (tip) tip.hidden = true;
+      return;
+    }
+    const k = tag.dataset.fx;
+    tag.classList.add('is-active');
+    host.querySelector(`.fx-link[data-fx="${k}"]`)?.classList.add('is-active');
+    tip.innerHTML = `<strong>${tag.dataset.tipTitle ?? ''}</strong><span>${tag.dataset.tipBody ?? ''}</span>`;
+    tip.hidden = false;
+    // A la derecha de la etiqueta: la causa siempre queda a la izquierda
+    // (ocurre antes o en el mismo ciclo), así la ficha no tapa la línea.
+    const r = tag.getBoundingClientRect();
+    const hr = host.getBoundingClientRect();
+    const right = r.right - hr.left + host.scrollLeft + 10;
+    const midY = r.top - hr.top + host.scrollTop + r.height / 2;
+    const fitsRight = right + tip.offsetWidth < host.scrollWidth - 4;
+    const left = fitsRight ? right : r.left - hr.left + host.scrollLeft - tip.offsetWidth - 10;
+    tip.style.left = `${Math.max(4, left)}px`;
+    tip.style.top = `${Math.max(4, midY - tip.offsetHeight / 2)}px`;
+  };
+  body.addEventListener('mouseover', (e) => showFx((e.target as Element).closest<SVGGElement>('.fx-tag')));
+  body.addEventListener('focusin', (e) => showFx((e.target as Element).closest<SVGGElement>('.fx-tag')));
 
   body.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
@@ -185,7 +218,7 @@ export function renderSimulation(app: App): HTMLElement {
   body.addEventListener('change', (e) => {
     const t = e.target as HTMLInputElement;
     if (t.dataset.act === 'filter') ui.filter = t.value;
-    else if (t.dataset.act === 'arrows') ui.arrows = t.checked;
+    else if (t.dataset.act === 'links') ui.allLinks = t.checked;
     else return;
     draw();
   });
@@ -207,7 +240,7 @@ function countActivations(history: SimStep[]): number {
   return history.reduce((n, s) => n + s.activations.length, 0);
 }
 
-function logTable(history: SimStep[]): string {
+function logTable(history: SimStep[], ruleLabel: RuleLabeler): string {
   const rows = history.filter((s) => s.events.length || s.activations.length);
   if (!rows.length) return '<p class="muted small log__empty">Todavía no ha ocurrido nada. Cambia una entrada para empezar.</p>';
   return `<div class="table-scroll"><table class="table table--log">
@@ -217,11 +250,12 @@ function logTable(history: SimStep[]): string {
         const ev = s.events.map((e) => `<code>${esc(e.signal)}</code> ${e.fromValue}→${e.value}`).join('<br>') || '<span class="muted">—</span>';
         const byRule = new Map<string, string[]>();
         s.activations.forEach((a) => {
-          const list = byRule.get(a.ruleName) ?? [];
+          const key = `<span class="fx-chip">${esc(ruleLabel(a.ruleId, a.ruleIndex))}</span>${esc(a.ruleName)}`;
+          const list = byRule.get(key) ?? [];
           list.push(`<code>${esc(a.targetSignal)}</code> ${a.fromValue}→${a.toValue}`);
-          byRule.set(a.ruleName, list);
+          byRule.set(key, list);
         });
-        const rulesHtml = [...byRule.keys()].map((r) => esc(r)).join('<br>') || '<span class="muted">—</span>';
+        const rulesHtml = [...byRule.keys()].join('<br>') || '<span class="muted">—</span>';
         const fx = [...byRule.values()].map((l) => l.join(', ')).join('<br>') || '<span class="muted">—</span>';
         return `<tr><td class="num mono">${s.time}</td><td>${ev}</td><td>${rulesHtml}</td><td>${fx}</td></tr>`;
       })

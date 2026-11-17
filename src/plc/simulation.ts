@@ -119,6 +119,12 @@ export class Simulator {
     const start = { ...this.states };
     const activations: Activation[] = [];
 
+    /** Escrituras de cada salida en este ciclo, en orden de ejecución. */
+    type Write = Omit<Activation, 'fromValue' | 'toValue' | 'targetSignal' | 'triggerTime'> & {
+      value: SignalLevel;
+    };
+    const writes = new Map<string, Write[]>();
+
     this.rules.forEach((rule, ruleIndex) => {
       if (!rule.conditions.length) return;
       const ok = rule.conditions.every((c) => {
@@ -148,20 +154,36 @@ export class Simulator {
         const from = this.states[a.signal] ?? 0;
         const to: SignalLevel =
           a.value === 'toggle' ? (from === 1 ? 0 : 1) : a.value === '1' ? 1 : 0;
-        if (to === from) return;
         this.states[a.signal] = to;
-        activations.push({
+        const list = writes.get(a.signal) ?? [];
+        list.push({
           triggerSignals: [trigger],
           enablingConditions: enabling,
-          targetSignal: a.signal,
-          triggerTime: this.t,
-          fromValue: from,
-          toValue: to,
           ruleName: rule.name,
           ruleIndex,
           ruleId: rule.id ?? `${rule.name}_${ruleIndex}`,
+          value: to,
         });
+        writes.set(a.signal, list);
       });
+    });
+
+    // Solo cuentan los cambios efectivos al final del ciclo, atribuidos a la
+    // última regla que escribió la salida (la que prevalece en el PLC).
+    writes.forEach((list, target) => {
+      const values = new Set(list.map((w) => w.value));
+      if (values.size > 1) {
+        const a = list.find((w) => w.value !== list[list.length - 1].value)!;
+        const b = list[list.length - 1];
+        const msg = `Conflicto en «${target}»: «${a.ruleName}» la pone a ${a.value} y «${b.ruleName}» a ${b.value} en el mismo ciclo. En el PLC prevalece la última (${b.ruleName}); revisa que no puedan cumplirse a la vez.`;
+        if (!this.warnings.includes(msg)) this.warnings.push(msg);
+      }
+      const begin = start[target] ?? 0;
+      const end = this.states[target];
+      if (begin === end) return;
+      const { value: _v, ...w } = list[list.length - 1];
+      void _v;
+      activations.push({ ...w, targetSignal: target, triggerTime: this.t, fromValue: begin, toValue: end });
     });
 
     this.updateDerived();
