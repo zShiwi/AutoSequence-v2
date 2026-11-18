@@ -15,7 +15,7 @@ oscuro, y funcionamiento sin conexión (las fuentes van incluidas).
 | --- | --- | --- |
 | 1 | **Señales** | Sensores, motores, cilindros (con inductivos de posición) y marcas. Validación de nombres en línea; al renombrar una señal se actualizan las reglas que la usan. |
 | 2 | **Lógica** | Reglas agrupadas en bloques. Condiciones por nivel (=1 / =0) o flanco (↑ / ↓); acciones SET, RESET o alternar. Reordenar, duplicar, avisos de señales inexistentes. |
-| 3 | **Simulación** | Escenario automático o **panel manual** interactivo. Cronograma con flechas causa → efecto y registro de ciclos. Detecta lógica que oscila. |
+| 3 | **Simulación** | Escenario automático, **panel manual** o **transportador** animado. Cronogramas por bloque con la regla que provoca cada cambio. Detecta lógica que oscila. |
 | 4 | **Código PLC** | AWL con resaltado, esquema de contactos gráfico y tabla de símbolos (E/A/M). Copiar y descargar `.awl`, `.svg`, `.csv`. |
 | 5 | **Documentación** | Portada con índice y una hoja A3 por bloque (tabla de señales, cronograma, cajetín). Imprimir / guardar en PDF o descargar SVG. |
 
@@ -34,6 +34,18 @@ Replica un ciclo de PLC y es equivalente al AWL generado:
    (activo = cilindro, reposo = inverso), lo que encadena secuencias.
 
 Tras cada cambio externo se ejecutan ciclos hasta que el sistema se estabiliza.
+
+### Transportador
+
+`src/plant/` simula la planta y la acopla al PLC simulado. El lazo son dos
+rectas de la longitud indicada y dos curvas; los topes se colocan por línea
+(arriba/abajo) y distancia al extremo izquierdo, con sus inductivos y su
+presencia en el propio tope, y los sensores de paso de paleta o acumulación
+máxima por su distancia a un tope. Las paletas avanzan si el motor está en
+marcha, se detienen ante un tope que no esté abierto del todo y se acumulan;
+los cilindros tardan su tiempo en abrir; las estaciones (robots) trabajan su
+tiempo de ciclo y activan su señal de liberación. Los sensores se calculan de
+la posición real y el PLC reacciona con sus reglas.
 
 ## Correcciones respecto al prototipo
 
@@ -99,4 +111,4 @@ navegador, el informe queda como artefacto del workflow.
 ## Pendiente
 
 - Editor de dibujo libre sobre las hojas (presente en el prototipo).
-- Temporizadores (TON/TOF) y condiciones O (OR) en las reglas.
+- Temporizadores (TON/TOF) en las reglas (p. ej. rotura de cadena con t > 2 s).

@@ -10,6 +10,15 @@ test('móvil 390 px: ninguna sección se desborda en horizontal', async ({ page 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow, `desbordamiento en ${s}`).toBeLessThanOrEqual(0);
   }
+  await go(page, 'sim');
+  await page.locator('[data-mode="plant"]').click();
+  await expect(page.locator('.plant-svg')).toBeVisible();
+  const plant = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(plant, 'desbordamiento en el transportador').toBeLessThanOrEqual(0);
+  await page.locator('[data-pl="edit"]').click();
+  await expect(page.locator('.plant-editor')).toBeVisible();
+  const editor = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(editor, 'desbordamiento en el editor del transportador').toBeLessThanOrEqual(0);
   await page.goto('/');
   const home = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(home, 'desbordamiento en Proyectos').toBeLessThanOrEqual(0);
