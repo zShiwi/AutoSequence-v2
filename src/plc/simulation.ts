@@ -38,9 +38,17 @@ export class Simulator {
   warnings: string[] = [];
   private t = 0;
 
-  constructor(signals: Signal[], rules: Rule[]) {
+  /**
+   * Con `externalDerived`, los inductivos no se calculan a partir del
+   * cilindro: los fija desde fuera la simulación de planta (el cilindro
+   * tarda en recorrer).
+   */
+  readonly externalDerived: boolean;
+
+  constructor(signals: Signal[], rules: Rule[], opts: { externalDerived?: boolean } = {}) {
     this.signals = signals;
     this.rules = rules;
+    this.externalDerived = !!opts.externalDerived;
     this.derived = derivedSignals(signals);
     this.reset();
   }
@@ -189,7 +197,7 @@ export class Simulator {
       activations.push({ ...w, targetSignal: target, triggerTime: this.t, fromValue: begin, toValue: end });
     });
 
-    this.updateDerived();
+    if (!this.externalDerived) this.updateDerived();
     this.memory = start;
     this.lastScanChanged = Object.keys(this.states).some((k) => this.states[k] !== start[k]);
 

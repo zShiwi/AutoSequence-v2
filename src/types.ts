@@ -80,6 +80,78 @@ export interface Cajetin {
   mountLocation: string;
 }
 
+// ---- Transportador (simulación visual) -------------------------------------
+
+export type ConveyorLine = 'top' | 'bottom';
+
+/**
+ * Tope neumático del transportador. Sus inductivos de activo/reposo son los
+ * del cilindro y el sensor de presencia está en el propio tope.
+ */
+export interface LayoutStop {
+  /** Señal del cilindro (SET = abre y deja pasar la paleta). */
+  cylinder: string;
+  /** Sensor de presencia de paleta en el tope. */
+  presence?: string;
+  line: ConveyorLine;
+  /** Distancia desde el extremo izquierdo del transportador (mm). */
+  x: number;
+  /** Tiempo de recorrido del cilindro (ms). */
+  travelMs: number;
+}
+
+export type SensorRole = 'paso' | 'acumulacion' | 'otro';
+
+/** Sensor suelto (paso de paleta, acumulación máxima…). */
+export interface LayoutSensor {
+  signal: string;
+  role: SensorRole;
+  /** Referencia: el cilindro de un tope, o «left» = extremo izquierdo. */
+  ref: string;
+  /** Solo con ref = «left»: línea donde está. */
+  line?: ConveyorLine;
+  /**
+   * Distancia en mm. Respecto a un tope: positiva = después del tope (en el
+   * sentido de avance), negativa = antes. Respecto al extremo: desde la izquierda.
+   */
+  offset: number;
+}
+
+/** Estación de trabajo (robot u operario) en un tope. */
+export interface LayoutStation {
+  /** Cilindro del tope donde se para la paleta. */
+  stop: string;
+  label: string;
+  action: 'load' | 'unload';
+  /** Señal que la estación activa al terminar (p. ej. «robot OK»). */
+  release?: string;
+  /** Sensores de pieza que valen 1 con la paleta procesada. */
+  okSensors: string[];
+  /** Sensores de pieza que valen 0 (pieza mal colocada). */
+  nokSensors: string[];
+  cycleMs: number;
+}
+
+export interface ConveyorLayout {
+  /** Longitud del transportador entre ejes de tambores (mm). */
+  length: number;
+  /** Radio de las curvas (mm). */
+  radius: number;
+  /** ccw: abajo avanza hacia la derecha y arriba hacia la izquierda. */
+  direction: 'ccw' | 'cw';
+  palletLength: number;
+  /** Separación mínima entre paletas acumuladas (mm). */
+  palletGap: number;
+  /** Velocidad de la cadena (mm/s). */
+  speed: number;
+  pallets: number;
+  /** Señal del motor; sin motor, la cadena siempre avanza. */
+  motor?: string;
+  stops: LayoutStop[];
+  sensors: LayoutSensor[];
+  stations: LayoutStation[];
+}
+
 /** Proyecto persistido en localStorage. */
 export interface Project {
   /** Identificador estable (los proyectos antiguos lo reciben al abrirse). */
@@ -90,6 +162,8 @@ export interface Project {
   rules: Rule[];
   blocks: Block[];
   cajetin?: Partial<Cajetin>;
+  /** Transportador para la simulación visual (opcional). */
+  layout?: ConveyorLayout;
   createdAt?: number;
   updatedAt?: number;
 }

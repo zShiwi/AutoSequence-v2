@@ -9,9 +9,10 @@ import { standaloneSvg } from '../diagram/ladder';
 import { ruleLabeler, type RuleLabeler } from '../plc/rules';
 import type { WaveRow } from '../diagram/wave';
 import type { App } from './app';
+import { renderPlant } from './plant';
 import type { SimStep } from '../types';
 
-type Mode = 'auto' | 'manual';
+type Mode = 'auto' | 'manual' | 'plant';
 
 /**
  * Qué se muestra:
@@ -64,6 +65,7 @@ export function renderSimulation(app: App): HTMLElement {
           <div class="segmented" role="radiogroup" aria-label="Modo de simulación">
             <button role="radio" data-mode="auto">${icon('play', 15)}Escenario automático</button>
             <button role="radio" data-mode="manual">${icon('pulse', 15)}Panel manual</button>
+            <button role="radio" data-mode="plant">${icon('conveyor', 15)}Transportador</button>
           </div>
         </div>
       </header>
@@ -151,6 +153,12 @@ export function renderSimulation(app: App): HTMLElement {
       b.classList.toggle('is-active', on);
       b.setAttribute('aria-checked', String(on));
     });
+
+    if (ui.mode === 'plant') {
+      body.innerHTML = '';
+      body.appendChild(renderPlant(app));
+      return;
+    }
 
     const { views: list, warnings } = views();
     const manual = ui.mode === 'manual';

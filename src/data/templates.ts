@@ -1,6 +1,7 @@
 /** Plantillas de proyecto disponibles al crear uno nuevo. */
 
-import type { Block, Cajetin, Signal } from '../types';
+import type { Block, Cajetin, ConveyorLayout, Signal } from '../types';
+import { acu4Layout } from '../plant/layout';
 import { exampleBlocks, exampleCajetin, exampleSignals } from './example';
 import { acu4Blocks, acu4Cajetin, acu4Signals } from './acu4';
 
@@ -10,7 +11,7 @@ export interface Template {
   /** Nombre propuesto para el proyecto. */
   projectName: string;
   description: string;
-  build: () => { signals: Signal[]; blocks: Block[]; cajetin: Partial<Cajetin> };
+  build: () => { signals: Signal[]; blocks: Block[]; cajetin: Partial<Cajetin>; layout?: ConveyorLayout };
 }
 
 export const TEMPLATES: Template[] = [
@@ -19,8 +20,8 @@ export const TEMPLATES: Template[] = [
     name: 'Acumulador 4 topes · 2 acumulaciones máximas',
     projectName: 'ACU 4 topes',
     description:
-      'Pre-carga, carga, pre-descarga y descarga con marcas de tránsito, paso de paleta, control de pieza, robot y seguridad del motor.',
-    build: () => ({ signals: acu4Signals(), blocks: acu4Blocks(), cajetin: acu4Cajetin() }),
+      'Pre-carga, carga, pre-descarga y descarga con marcas de tránsito, paso de paleta, control de pieza, robot, seguridad del motor y transportador animado.',
+    build: () => ({ signals: acu4Signals(), blocks: acu4Blocks(), cajetin: acu4Cajetin(), layout: acu4Layout() }),
   },
   {
     id: 'transfer',

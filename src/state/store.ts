@@ -117,7 +117,7 @@ export function nameTaken(name: string, exceptId?: string): boolean {
 
 export function createProject(
   name: string,
-  seed: Partial<Pick<Project, 'signals' | 'blocks' | 'cajetin'>> = {},
+  seed: Partial<Pick<Project, 'signals' | 'blocks' | 'cajetin' | 'layout'>> = {},
 ): { ok: true; project: Project } | { ok: false; error: string } {
   const trimmed = name.trim();
   if (!trimmed) return { ok: false, error: 'Escribe un nombre para el proyecto.' };
@@ -128,6 +128,7 @@ export function createProject(
     rules: [],
     blocks: seed.blocks ?? [{ name: 'Bloque principal', rules: [] }],
     cajetin: seed.cajetin ?? {},
+    ...(seed.layout ? { layout: seed.layout } : {}),
   });
   upsert(project);
   return { ok: true, project };
