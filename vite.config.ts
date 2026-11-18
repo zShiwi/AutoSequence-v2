@@ -9,6 +9,8 @@ export default defineConfig({
     // Fuentes e iconos se incrustan en el CSS: la app funciona sin red
     // (equipos de planta) y se puede empaquetar en un único HTML.
     assetsInlineLimit: 1024 * 1024,
+    // SINGLE_FILE=1: un único JS (incluida la vista 3D) para empaquetar en un HTML.
+    ...(process.env.SINGLE_FILE ? { rollupOptions: { output: { inlineDynamicImports: true } } } : {}),
   },
   test: {
     environment: 'node',

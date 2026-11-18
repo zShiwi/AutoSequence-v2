@@ -89,7 +89,7 @@ export function renderPlant(app: App): HTMLElement {
         <div class="stepper" role="group" aria-label="Paletas en el lazo">
           <span class="stepper__label">Paletas</span>
           <button class="stepper__btn" data-pl="pminus" aria-label="Quitar una paleta"${plant ? '' : ' disabled'}>−</button>
-          <output class="stepper__val mono" data-slot="pcount">${plant ? plant.pallets.length : layout.pallets}</output>
+          <output class="stepper__val mono" data-slot="npallets">${plant ? plant.pallets.length : layout.pallets}</output>
           <button class="stepper__btn" data-pl="pplus" aria-label="Añadir una paleta"${plant ? '' : ' disabled'}>+</button>
           <span class="stepper__max muted small">máx. ${plant ? plant.capacity() : '—'}</span>
         </div>
@@ -189,7 +189,7 @@ export function renderPlant(app: App): HTMLElement {
       }
       layout.pallets = plant.pallets.length;
       commit();
-      qs(root, '[data-slot="pcount"]').textContent = String(plant.pallets.length);
+      qs(root, '[data-slot="npallets"]').textContent = String(plant.pallets.length);
       const dims = root.querySelector<HTMLInputElement>('.plant-editor input[name="pallets"]');
       if (dims) dims.value = String(plant.pallets.length);
       drawPanels(true);
@@ -244,9 +244,15 @@ export function renderPlant(app: App): HTMLElement {
     lastPanels = now;
     const st = plant.sim.states;
     const manual = plant.manualInputs();
-    const m = root.querySelector('[data-slot="manual"]');
-    if (m)
-      m.innerHTML = manual.length
+    const put = (el: Element | null, html: string) => {
+      if (el && el.getAttribute('data-html') !== html) {
+        el.innerHTML = html;
+        el.setAttribute('data-html', html);
+      }
+    };
+    put(
+      root.querySelector('[data-slot="manual"]'),
+      manual.length
         ? `<div class="io-grid io-grid--compact">${manual
             .map((n) => {
               const on = st[n] === 1;
@@ -256,17 +262,19 @@ export function renderPlant(app: App): HTMLElement {
               </div>`;
             })
             .join('')}</div>`
-        : '<p class="muted small">Todas las entradas las gobierna el transportador.</p>';
-    const s = root.querySelector('[data-slot="state"]');
-    if (s)
-      s.innerHTML = `<div class="io-grid io-grid--compact">${signals
+        : '<p class="muted small">Todas las entradas las gobierna el transportador.</p>',
+    );
+    put(
+      root.querySelector('[data-slot="state"]'),
+      `<div class="io-grid io-grid--compact">${signals
         .filter((x) => targets.has(x.name))
         .map((x) => {
           const on = st[x.name] === 1;
           const word = x.type === 'Cilindro' ? (on ? 'Abre' : 'Cierra') : on ? '1' : '0';
           return `<div class="io io--output${on ? ' is-on' : ''}" title="${esc(x.description)}"><span class="lamp"></span><code>${esc(x.name)}</code><span class="io__val">${word}</span></div>`;
         })
-        .join('')}</div>`;
+        .join('')}</div>`,
+    );
     const prod = root.querySelector('[data-slot="prod"]');
     if (prod) {
       const cyc = plant.stationCycles();

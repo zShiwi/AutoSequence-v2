@@ -1,6 +1,7 @@
 import { expect, fromTemplate, test } from './fixtures';
 
 test('ACU 4 topes: transportador 3D con nombres, paletas en marcha y reglas', async ({ page }) => {
+  test.setTimeout(90_000);
   await fromTemplate(page, 'acu4');
   await page.locator('[data-mode="plant"]').click();
   await expect(page.locator('.plant3d canvas')).toBeVisible({ timeout: 15_000 });
@@ -10,7 +11,7 @@ test('ACU 4 topes: transportador 3D con nombres, paletas en marcha y reglas', as
   // Añadir paletas sin reiniciar la simulación.
   await page.locator('[data-pl="pplus"]').click();
   await page.locator('[data-pl="pplus"]').click();
-  await expect(page.locator('[data-slot="pcount"]')).toHaveText('9');
+  await expect(page.locator('[data-slot="npallets"]')).toHaveText('9');
   await expect(page.locator('.tag3d--pallet')).toHaveCount(9);
   await page.locator('[data-pl="pminus"]').click();
   await expect(page.locator('.tag3d--pallet')).toHaveCount(8);

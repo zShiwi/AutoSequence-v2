@@ -47,6 +47,12 @@ los cilindros tardan su tiempo en abrir; las estaciones (robots) trabajan su
 tiempo de ciclo y activan su señal de liberación. Los sensores se calculan de
 la posición real y el PLC reacciona con sus reglas.
 
+La vista 3D (three.js, `src/plant/view3d.ts`, se carga solo al abrirla) muestra
+el bastidor con sus patas, las cadenas en movimiento, las paletas, los topes que
+suben y bajan (rojo cerrado, verde abierto) y los sensores con su LED, todos con
+su nombre. Las paletas se añaden o quitan en marcha para probar acumulaciones.
+También hay una vista en plano.
+
 ## Correcciones respecto al prototipo
 
 - **AWL**: la lógica estaba invertida (saltaba a «no cumple» cuando la
