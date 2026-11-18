@@ -167,6 +167,7 @@ function dedupe(list: LayoutIssue[]): LayoutIssue[] {
 export function defaultLayout(signals: Signal[]): ConveyorLayout {
   const cylinders = signals.filter((s) => s.type === 'Cilindro' && !validateSignalName(s.name));
   const motor = signals.find((s) => s.type === 'Motor');
+  const sensors = new Set(signals.filter((s) => s.type === 'Sensor').map((s) => s.name));
   const length = 6000;
   const perLine = Math.ceil(cylinders.length / 2);
   return {
@@ -184,6 +185,8 @@ export function defaultLayout(signals: Signal[]): ConveyorLayout {
       const n = onBottom ? perLine : cylinders.length - perLine;
       return {
         cylinder: c.name,
+        // La presencia enlazada al cilindro en Señales va en el propio tope.
+        ...(c.presence && sensors.has(c.presence) ? { presence: c.presence } : {}),
         line: onBottom ? 'bottom' : 'top',
         x: Math.round(((k + 1) * length) / (n + 1)),
         travelMs: 300,

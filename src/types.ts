@@ -22,6 +22,11 @@ export interface Signal {
   inductivoActivo?: string;
   /** Solo cilindros: inductivo de posición retraída (inverso del cilindro). */
   inductivoReposo?: string;
+  /**
+   * Solo cilindros de tope: sensor (señal tipo Sensor) que detecta la paleta
+   * parada en ese tope. El transportador lo coloca en el propio tope.
+   */
+  presence?: string;
 }
 
 /** Evento que evalúa una condición sobre una señal. */

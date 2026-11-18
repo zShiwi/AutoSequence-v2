@@ -92,6 +92,103 @@ export function cleanSignals(signals: Signal[]): Signal[] {
   });
 }
 
+// ---- Alta rápida ------------------------------------------------------------
+
+/** Todos los nombres ocupados: señales e inductivos. */
+export function takenNames(signals: Signal[]): Set<string> {
+  return new Set(allSignalNames(signals).map((n) => n.trim()).filter(Boolean));
+}
+
+/**
+ * Primer nombre libre con un prefijo y numeración de `digits` cifras
+ * (C05, PX09…): rellena los huecos empezando por 1.
+ */
+export function nextFreeName(prefix: string, taken: Set<string>, digits = 2, extra: string[] = []): string {
+  const all = new Set([...taken, ...extra]);
+  let i = 1;
+  const name = () => `${prefix}${String(i).padStart(digits, '0')}`;
+  while (all.has(name())) i++;
+  return name();
+}
+
+/** Inductivos por convención: activo = <nombre>PX2 (abierto), reposo = <nombre>PX1 (cerrado). */
+export function stopInductivos(cylinder: string): { activo: string; reposo: string } {
+  return { activo: `${cylinder}PX2`, reposo: `${cylinder}PX1` };
+}
+
+export interface StopDraft {
+  name: string;
+  description: string;
+  activo: string;
+  reposo: string;
+  /** Sensor de presencia a crear (vacío = sin presencia). */
+  presence: string;
+  presenceDescription: string;
+}
+
+/** Valores propuestos para un tope nuevo: con escribir solo el nombre basta. */
+export function proposeStop(signals: Signal[]): StopDraft {
+  const taken = takenNames(signals);
+  const name = nextFreeName('C', taken);
+  const presence = nextFreeName('PX', taken);
+  const ind = stopInductivos(name);
+  return {
+    name,
+    description: '',
+    activo: ind.activo,
+    reposo: ind.reposo,
+    presence,
+    presenceDescription: `Paleta en tope ${name}`,
+  };
+}
+
+/** Errores de un tope nuevo, por campo. */
+export function stopDraftErrors(d: StopDraft, signals: Signal[]): Partial<Record<'name' | 'activo' | 'reposo' | 'presence', string>> {
+  const taken = takenNames(signals);
+  const out: Partial<Record<'name' | 'activo' | 'reposo' | 'presence', string>> = {};
+  const fields: ['name' | 'activo' | 'reposo' | 'presence', string][] = [
+    ['name', d.name.trim()],
+    ['activo', d.activo.trim()],
+    ['reposo', d.reposo.trim()],
+    ['presence', d.presence.trim()],
+  ];
+  const seen = new Map<string, string>();
+  fields.forEach(([f, n]) => {
+    if (f === 'presence' && !n) return;
+    const v = validateSignalName(n);
+    if (v) out[f] = v;
+    else if (taken.has(n)) out[f] = `«${n}» ya existe`;
+    else if (seen.has(n)) out[f] = `«${n}» se repite`;
+    seen.set(n, f);
+  });
+  return out;
+}
+
+/** Señales que crea un tope: el cilindro (con sus inductivos) y su presencia. */
+export function buildStop(d: StopDraft): Signal[] {
+  const name = d.name.trim();
+  const presence = d.presence.trim();
+  const cyl: Signal = {
+    name,
+    type: 'Cilindro',
+    initial: 0,
+    description: d.description.trim() || `Tope ${name}`,
+    inductivoActivo: d.activo.trim(),
+    inductivoReposo: d.reposo.trim(),
+    ...(presence ? { presence } : {}),
+  };
+  if (!presence) return [cyl];
+  return [
+    { name: presence, type: 'Sensor', initial: 0, description: d.presenceDescription.trim() || `Paleta en tope ${name}` },
+    cyl,
+  ];
+}
+
+/** Cilindro de tope al que está enlazado un sensor de presencia. */
+export function presenceOwner(signals: Signal[], sensor: string): Signal | undefined {
+  return signals.find((s) => s.type === 'Cilindro' && s.presence === sensor);
+}
+
 /** Regla válida para un nombre de señal (se usa como símbolo PLC). */
 export function validateSignalName(name: string): string | null {
   if (!name.trim()) return 'El nombre no puede estar vacío';

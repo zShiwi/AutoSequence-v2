@@ -2,11 +2,12 @@
 
 import { commit, project, renameSignalRefs, signalUsage, allRules } from '../state/store';
 import { exampleBlocks, exampleSignals } from '../data/example';
-import { TYPE_HINT, derivedSignals, validateSignalName } from '../plc/signals';
+import { TYPE_HINT, derivedSignals, presenceOwner, validateSignalName } from '../plc/signals';
 import type { Signal, SignalType } from '../types';
 import { confirmDialog, esc, h, icon, qs, toast } from './dom';
 import { signalMatches } from './search';
 import type { App } from './app';
+import { openQuickAdd, quickAddBar, type QuickKind } from './quickadd';
 
 const TYPES: SignalType[] = ['Sensor', 'Motor', 'Cilindro', 'Virtual'];
 const TYPE_ICON: Record<SignalType, string> = {
@@ -67,10 +68,8 @@ export function renderSignals(app: App): HTMLElement {
           <h1>Señales</h1>
           <p class="lede">Entradas, salidas y marcas que intervienen en la máquina. Cada nombre se usa como símbolo en el PLC.</p>
         </div>
-        <div class="page-head__actions">
-          <button class="btn btn--primary" data-act="add">${icon('plus', 16)}<span>Añadir señal</span></button>
-        </div>
       </header>
+      <div data-slot="quick">${quickAddBar()}</div>
       <div class="stats" data-slot="stats"></div>
       <div class="filterbar" data-slot="filters" role="search" aria-label="Filtrar señales">
         <label class="searchbox">
@@ -187,9 +186,10 @@ export function renderSignals(app: App): HTMLElement {
         <div class="empty">
           <div class="empty__art" aria-hidden="true">${icon('signals', 34)}</div>
           <h2>Sin señales todavía</h2>
-          <p>Añade los sensores, motores, cilindros y marcas de la máquina. Para los cilindros podrás indicar sus inductivos de posición.</p>
+          <p>Empieza por los topes: con un clic se crean el cilindro, sus inductivos de activo y reposo y el sensor de presencia. Después, los sensores, motores y marcas sueltos.</p>
           <div class="empty__actions">
-            <button class="btn btn--primary" data-act="add">${icon('plus', 16)}<span>Añadir primera señal</span></button>
+            <button class="btn btn--primary" data-quick="stop">${icon('cylinder', 16)}<span>Añadir primer tope</span></button>
+            <button class="btn btn--ghost" data-act="add">${icon('plus', 16)}<span>Añadir primera señal</span></button>
             <button class="btn btn--ghost" data-act="example">${icon('play', 16)}<span>Cargar ejemplo</span></button>
           </div>
         </div>`;
@@ -216,7 +216,7 @@ export function renderSignals(app: App): HTMLElement {
               ${p.signals
                 .map(
                   (s, i) => `
-                <tr data-i="${i}">
+                <tr data-i="${i}"${s.type === 'Cilindro' ? ' class="row--stop"' : presenceOwner(p.signals, s.name.trim()) ? ' class="row--presence"' : ''}>
                   <td>
                     <div class="name-cell"><span class="type-ico type-ico--${s.type.toLowerCase()}">${icon(TYPE_ICON[s.type], 16)}</span>
                     <input class="input input--mono" data-f="name" value="${esc(s.name)}" placeholder="p. ej. CIL_A" spellcheck="false" aria-label="Nombre de la señal" /></div>
@@ -226,7 +226,7 @@ export function renderSignals(app: App): HTMLElement {
                     <select class="input" data-f="type" aria-label="Tipo">
                       ${TYPES.map((t) => `<option value="${t}"${t === s.type ? ' selected' : ''}>${t}</option>`).join('')}
                     </select>
-                    <span class="cell-hint">${TYPE_HINT[s.type]}</span>
+                    <span class="cell-hint">${s.type === 'Cilindro' && s.presence ? 'Tope · con presencia' : TYPE_HINT[s.type]}</span>
                   </td>
                   <td>
                     <button class="bit${s.initial ? ' bit--on' : ''}" data-f="initial" aria-pressed="${s.initial === 1}" title="Estado al arrancar">${s.initial}</button>
@@ -236,10 +236,11 @@ export function renderSignals(app: App): HTMLElement {
                     ${
                       s.type === 'Cilindro'
                         ? `<div class="ind-pair">
-                             <label><span>Ext.</span><input class="input input--mono input--sm" data-f="inductivoActivo" value="${esc(s.inductivoActivo ?? '')}" placeholder="${esc(s.name || 'CIL')}_ext" spellcheck="false" /></label>
-                             <label><span>Ret.</span><input class="input input--mono input--sm" data-f="inductivoReposo" value="${esc(s.inductivoReposo ?? '')}" placeholder="${esc(s.name || 'CIL')}_ret" spellcheck="false" /></label>
+                             <label title="Inductivo activo: tope abierto / cilindro extendido"><span>Act.</span><input class="input input--mono input--sm" data-f="inductivoActivo" value="${esc(s.inductivoActivo ?? '')}" placeholder="${esc(s.name || 'CIL')}PX2" spellcheck="false" aria-label="Inductivo activo" /></label>
+                             <label title="Inductivo de reposo: tope cerrado / cilindro retraído"><span>Rep.</span><input class="input input--mono input--sm" data-f="inductivoReposo" value="${esc(s.inductivoReposo ?? '')}" placeholder="${esc(s.name || 'CIL')}PX1" spellcheck="false" aria-label="Inductivo de reposo" /></label>
+                             <label title="Sensor que detecta la paleta parada en este tope"><span>Pres.</span><select class="input input--mono input--sm" data-f="presence" aria-label="Sensor de presencia del tope">${presenceOptions(p.signals, s.presence)}</select></label>
                            </div>`
-                        : '<span class="muted">—</span>'
+                        : presenceChip(p.signals, s)
                     }
                   </td>
                   <td class="usage"></td>
@@ -294,11 +295,24 @@ export function renderSignals(app: App): HTMLElement {
             if (n) toast(`«${prev}» → «${after}»: ${n} referencia${n === 1 ? '' : 's'} actualizada${n === 1 ? '' : 's'} en las reglas.`, 'info');
             commit();
           }
+          const linked = f === 'name' && !!prev && prev !== after && (s.type === 'Cilindro' || p.signals.some((x) => x.presence === after));
           if (f === 'name') committedName = after;
           before = after;
           refreshValidation();
+          if (linked) draw();
         });
       }
+    });
+
+    tr.querySelector<HTMLSelectElement>('[data-f="presence"]')?.addEventListener('change', (e) => {
+      const v = (e.target as HTMLSelectElement).value;
+      if (v) s.presence = v;
+      else delete s.presence;
+      // Un sensor solo puede ser la presencia de un tope.
+      p.signals.forEach((x) => x !== s && x.presence === v && v && delete x.presence);
+      keepVisible = i;
+      commit();
+      draw();
     });
 
     qs<HTMLSelectElement>(tr, '[data-f="type"]').addEventListener('change', (e) => {
@@ -306,6 +320,7 @@ export function renderSignals(app: App): HTMLElement {
       if (s.type !== 'Cilindro') {
         delete s.inductivoActivo;
         delete s.inductivoReposo;
+        delete s.presence;
       }
       keepVisible = i;
       commit();
@@ -334,6 +349,7 @@ export function renderSignals(app: App): HTMLElement {
         if (!ok) return;
       }
       p.signals.splice(i, 1);
+      p.signals.forEach((x) => x.presence === s.name.trim() && delete x.presence);
       commit();
       draw();
     });
@@ -361,7 +377,24 @@ export function renderSignals(app: App): HTMLElement {
     draw();
   };
 
-  qs(page, '[data-act="add"]').addEventListener('click', add);
+  /** Tras un alta rápida: quita filtros, repinta y resalta lo creado. */
+  const created = (names: string[]) => {
+    filters.q = '';
+    filters.type = 'all';
+    filters.unused = false;
+    keepVisible = null;
+    draw();
+    const rows = names
+      .map((n) => p.signals.findIndex((x) => x.name === n))
+      .map((i) => body.querySelector<HTMLElement>(`tr[data-i="${i}"]`))
+      .filter((x): x is HTMLElement => !!x);
+    rows.forEach((tr) => tr.classList.add('is-new'));
+    rows[rows.length - 1]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  page.addEventListener('click', (e) => {
+    const k = (e.target as HTMLElement).closest<HTMLElement>('[data-quick]')?.dataset.quick;
+    if (k) openQuickAdd(k as QuickKind, created);
+  });
   qs(page, '[data-act="next"]').addEventListener('click', () => app.go('logic'));
 
   // ---- Filtros -------------------------------------------------------------
@@ -405,4 +438,25 @@ export function renderSignals(app: App): HTMLElement {
 
   draw();
   return page;
+}
+
+/** Opciones del selector de presencia de un tope: sensores existentes. */
+function presenceOptions(signals: Signal[], current: string | undefined): string {
+  const sensors = signals.filter((x) => x.type === 'Sensor' && x.name.trim());
+  const missing = current && !sensors.some((x) => x.name === current);
+  return (
+    `<option value=""${current ? '' : ' selected'}>—</option>` +
+    sensors
+      .map((x) => `<option value="${esc(x.name)}"${x.name === current ? ' selected' : ''}>${esc(x.name)}</option>`)
+      .join('') +
+    (missing ? `<option value="${esc(current)}" selected>${esc(current)} (no existe)</option>` : '')
+  );
+}
+
+/** En un sensor: indica de qué tope es la presencia. */
+function presenceChip(signals: Signal[], s: Signal): string {
+  const owner = s.type === 'Sensor' ? presenceOwner(signals, s.name.trim()) : undefined;
+  return owner
+    ? `<span class="badge badge--stop" title="Detecta la paleta parada en el tope ${esc(owner.name)}">${icon('cylinder', 13)}Presencia del tope ${esc(owner.name)}</span>`
+    : '<span class="muted">—</span>';
 }
