@@ -6,10 +6,13 @@ import {
   duplicateProject,
   exportProjectJSON,
   formatRelative,
-  importProject,
+  exportAllJSON,
+  importFile,
   loadProjects,
   nameTaken,
 } from '../state/store';
+import { lastBackupAt, listTrash, TRASH_DAYS } from '../state/backups';
+import { openTrash } from './backups';
 import { TEMPLATES, templateStats, type Template } from '../data/templates';
 import { confirmDialog, download, esc, h, icon, promptDialog, qs, slug, toast } from './dom';
 import type { App } from './app';
@@ -24,17 +27,41 @@ export function renderHome(app: App): HTMLElement {
           <p class="lede">Define señales y reglas de una máquina, simula su secuencia y genera el código PLC y la documentación.</p>
         </div>
         <div class="page-head__actions">
-          <label class="btn btn--ghost" title="Abrir un archivo .json exportado desde AutoSequence">
+          <button class="btn btn--ghost" data-act="backup" title="Descargar todos los proyectos en un único archivo">${icon('archive', 16)}<span>Copia de seguridad</span></button>
+          <label class="btn btn--ghost" title="Abrir un proyecto (.json) o una copia de seguridad completa">
             ${icon('upload', 16)}<span>Importar</span>
             <input type="file" accept=".json,application/json" hidden data-act="import" />
           </label>
           <button class="btn btn--primary" data-act="new">${icon('plus', 16)}<span>Nuevo proyecto</span></button>
         </div>
       </header>
+      <div data-slot="notice"></div>
       <section data-slot="list"></section>
     </div>`);
 
   const list = qs(page, '[data-slot="list"]');
+  const notice = qs(page, '[data-slot="notice"]');
+
+  const backup = () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    void download(`autosequence-copia-${stamp}.json`, exportAllJSON(), 'application/json', 'Copia de seguridad descargada.');
+    drawNotice();
+  };
+
+  /** Aviso si nunca se ha hecho copia o la última tiene más de 7 días. */
+  const drawNotice = () => {
+    const count = loadProjects().length;
+    const last = lastBackupAt();
+    const days = last ? Math.floor((Date.now() - last) / 86400000) : null;
+    if (!count || (days !== null && days < 7)) {
+      notice.innerHTML = '';
+      return;
+    }
+    notice.innerHTML = `<div class="callout callout--warn">${icon('alert', 18)}<p>${
+      days === null ? 'Aún no has hecho ninguna copia de seguridad.' : `Tu última copia de seguridad es de hace ${days} días.`
+    } Los proyectos solo están guardados en este navegador: si se borran sus datos, se pierden. <button class="link" data-act="backup2">Descargar copia ahora</button></p></div>`;
+    qs(notice, '[data-act="backup2"]').addEventListener('click', backup);
+  };
 
   const newProject = async () => {
     const name = await promptDialog('Nuevo proyecto', 'Nombre del proyecto', '', {
@@ -98,12 +125,15 @@ export function renderHome(app: App): HTMLElement {
             <button class="btn btn--primary" data-act="new2">${icon('plus', 16)}<span>Nuevo proyecto vacío</span></button>
           </div>
         </div>
+        ${listTrash().length ? `<p class="footnote"><button class="link" data-act="trash">${icon('trash', 14)} Papelera (${listTrash().length})</button></p>` : ''}
         ${templatesHtml()}`;
       qs(list, '[data-act="new2"]').addEventListener('click', newProject);
+      list.querySelector('[data-act="trash"]')?.addEventListener('click', () => openTrash(() => { draw(); drawNotice(); }));
       bindTemplates();
       return;
     }
 
+    const trashCount = listTrash().length;
     list.innerHTML = `
       <div class="card card--flush"><div class="table-scroll">
         <table class="table table--projects">
@@ -131,10 +161,13 @@ export function renderHome(app: App): HTMLElement {
           </tbody>
         </table>
       </div></div>
-      <p class="footnote">Los proyectos se guardan automáticamente en este navegador. Usa <strong>Exportar</strong> para hacer copias o pasarlos a otro equipo.</p>
+      <p class="footnote">Los proyectos se guardan automáticamente en este navegador, con versiones cada 10 minutos.
+        Usa <strong>Copia de seguridad</strong> para guardarlos fuera del navegador o pasarlos a otro equipo.
+        ${trashCount ? `<button class="link" data-act="trash">${icon('trash', 14)} Papelera (${trashCount})</button>` : ''}</p>
       ${templatesHtml()}`;
 
     bindTemplates();
+    list.querySelector('[data-act="trash"]')?.addEventListener('click', () => openTrash(() => { draw(); drawNotice(); }));
     list.querySelectorAll<HTMLTableRowElement>('tbody tr').forEach((tr) => {
       const id = tr.dataset.id!;
       const p = projects.find((x) => x.id === id)!;
@@ -149,12 +182,12 @@ export function renderHome(app: App): HTMLElement {
         } else if (act === 'del') {
           const ok = await confirmDialog(
             'Eliminar proyecto',
-            `Se eliminará <strong>${esc(p.name)}</strong> de este navegador. Esta acción no se puede deshacer; si quieres conservarlo, expórtalo antes.`,
-            { confirm: 'Eliminar', danger: true },
+            `<strong>${esc(p.name)}</strong> se moverá a la papelera. Podrás recuperarlo durante ${TRASH_DAYS} días.`,
+            { confirm: 'Mover a la papelera', danger: true },
           );
           if (!ok) return;
           deleteProject(id);
-          toast('Proyecto eliminado.');
+          toast('Proyecto movido a la papelera.');
           draw();
         } else {
           app.openProject(id);
@@ -164,17 +197,24 @@ export function renderHome(app: App): HTMLElement {
   };
 
   qs(page, '[data-act="new"]').addEventListener('click', newProject);
+  qs(page, '[data-act="backup"]').addEventListener('click', backup);
   qs<HTMLInputElement>(page, '[data-act="import"]').addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    const res = importProject(await file.text());
+    const res = importFile(await file.text());
     if (!res.ok) return toast(res.error, 'error', 5000);
-    toast(`Importado «${res.project.name}».`);
+    toast(
+      res.imported.length === 1
+        ? `Importado «${res.imported[0].name}».`
+        : `Copia restaurada: ${res.imported.length} proyectos importados.`,
+    );
     draw();
+    drawNotice();
   });
 
   draw();
+  drawNotice();
   return page;
 }

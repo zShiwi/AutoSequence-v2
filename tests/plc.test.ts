@@ -136,7 +136,7 @@ describe('Generación de código', () => {
   it('KOP genera una network por regla con bobinas en paralelo', () => {
     const rungs = ladderModel(blocks);
     expect(rungs).toHaveLength(6);
-    expect(rungs[0].contacts.map((c) => c.kind)).toEqual(['NO', 'P']);
+    expect(rungs[0].contacts.map((g) => g.map((c) => c.kind))).toEqual([['NO'], ['P']]);
     expect(rungs[0].coils.map((c) => c.kind)).toEqual(['S', 'S']);
     expect(generateKOP(blocks)).toContain('Network 1: Inicio de ciclo');
   });
@@ -180,5 +180,48 @@ describe('Relaciones causa → efecto del cronograma', () => {
     expect(r1.trigger).toBe('S1_marcha');
     expect(r1.triggerEdge).toBe('↑');
     expect(r1.triggerStep).toBe(r1.step);
+  });
+});
+
+describe('Condiciones «O» (contactos en paralelo)', () => {
+  const orRule = (): Rule => ({
+    id: 99,
+    name: 'Paro por pulsador o seta',
+    conditions: [
+      { signal: 'en_marcha', event: '==1', delay: 0, operator: 'AND' },
+      { signal: 'paro', event: 'Flanco ascendente', delay: 0, operator: 'AND' },
+      { signal: 'seta', event: '==1', delay: 0, operator: 'OR' },
+    ],
+    actions: [{ signal: 'motor', value: '0' }],
+  });
+  const sigs = () => [S('en_marcha'), S('paro'), S('seta'), S('motor', 'Motor', { initial: 1 })];
+
+  it('Y entre grupos, O dentro del grupo', () => {
+    const a = new Simulator(sigs(), [orRule()]);
+    a.apply([{ signal: 'seta', value: 1 }]);
+    expect(a.states.motor).toBe(1); // falta en_marcha (grupo Y)
+    a.apply([{ signal: 'en_marcha', value: 1 }]);
+    expect(a.states.motor).toBe(0); // seta basta dentro del grupo O
+
+    const b = new Simulator(sigs(), [orRule()]);
+    b.apply([{ signal: 'en_marcha', value: 1 }]);
+    b.apply([{ signal: 'paro', value: 1 }]);
+    expect(b.states.motor).toBe(0); // también por el flanco de paro
+  });
+
+  it('AWL con U( O O ) y KOP con contactos en paralelo', () => {
+    const blocks = [{ name: 'B', rules: [orRule()] }];
+    const awl = generateAWL(blocks);
+    expect(awl).toMatch(/U\(\s+\/\/ inicio rama en paralelo/);
+    expect(awl).toMatch(/O\s+M 110\.0/); // flanco de paro en paralelo
+    expect(awl).toMatch(/O\s+"seta"/);
+    expect(awl).toMatch(/\)\s+\/\/ fin rama en paralelo/);
+    const rung = ladderModel(blocks)[0];
+    expect(rung.contacts.map((g) => g.map((c) => c.signal))).toEqual([['en_marcha'], ['paro', 'seta']]);
+  });
+
+  it('las reglas existentes (solo Y) no cambian', () => {
+    const sim = runAutoScenario(exampleSignals(), exampleBlocks().flatMap((b) => b.rules));
+    expect(sim.warnings).toEqual([]);
   });
 });

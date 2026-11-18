@@ -12,6 +12,7 @@
  */
 
 import type { Block, Condition } from '../types';
+import { conditionGroups } from './rules';
 import {
   EDGE_MEMORY_BYTE,
   EDGE_PULSE_BYTE,
@@ -88,19 +89,27 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
     out.push('');
   }
 
-  const condLine = (c: Condition): string => {
+  /** Una condición; `or` = dentro de un grupo en paralelo (O / ON). */
+  const condLine = (c: Condition, or = false): string => {
+    const [pos, neg] = or ? ['O', 'ON'] : ['U', 'UN'];
     switch (c.event) {
       case '==1':
-        return line('U', sym(c.signal), `${c.signal} = 1`);
+        return line(pos, sym(c.signal), `${c.signal} = 1`);
       case '==0':
-        return line('UN', sym(c.signal), `${c.signal} = 0`);
+        return line(neg, sym(c.signal), `${c.signal} = 0`);
       default: {
         const rising = c.event === 'Flanco ascendente';
         const e = edges.get(`${c.signal}|${rising ? 'P' : 'N'}`)!;
-        return line('U', e.pulse, `flanco ${rising ? '↑' : '↓'} ${c.signal}`);
+        return line(pos, e.pulse, `flanco ${rising ? '↑' : '↓'} ${c.signal}`);
       }
     }
   };
+
+  /** Grupo de condiciones: una sola en serie, o varias en paralelo U( O O ). */
+  const groupLines = (g: Condition[]): string[] =>
+    g.length === 1
+      ? [condLine(g[0])]
+      : [line('U(', '', 'inicio rama en paralelo (O)'), ...g.map((c) => condLine(c, true)), line(')', '', 'fin rama en paralelo')];
 
   let currentBlock = -1;
   rules.forEach(({ r, bi, block }, idx) => {
@@ -113,7 +122,7 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
     const flag = bitAddress('M', idx, RULE_FLAG_BYTE);
     out.push(`NETWORK // ${network++}`);
     out.push(`TITLE = R${idx + 1} · ${r.name}`);
-    r.conditions.forEach((c) => out.push(condLine(c)));
+    conditionGroups(r.conditions).forEach((g) => out.push(...groupLines(g)));
     out.push(line('=', flag, 'regla activa'));
 
     r.actions.forEach((a, ai) => {

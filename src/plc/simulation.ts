@@ -19,7 +19,8 @@
  *  - El escenario automático fuerza el flanco aunque la señal ya estuviera a 1.
  */
 
-import type { Activation, Rule, Signal, SignalLevel, SimEvent, SimStep } from '../types';
+import type { Activation, Condition, Rule, Signal, SignalLevel, SimEvent, SimStep } from '../types';
+import { conditionGroups } from './rules';
 import { derivedSignals, externalInputs, type DerivedSignal } from './signals';
 
 type States = Record<string, SignalLevel>;
@@ -127,7 +128,7 @@ export class Simulator {
 
     this.rules.forEach((rule, ruleIndex) => {
       if (!rule.conditions.length) return;
-      const ok = rule.conditions.every((c) => {
+      const isTrue = (c: Condition): boolean => {
         switch (c.event) {
           case 'Flanco ascendente':
             return this.memory[c.signal] === 0 && start[c.signal] === 1;
@@ -140,14 +141,16 @@ export class Simulator {
           default:
             return false;
         }
-      });
+      };
+      // Y entre grupos, O dentro de cada grupo (contactos en paralelo).
+      const ok = conditionGroups(rule.conditions).every((g) => g.some(isTrue));
       if (!ok) return;
 
-      // Señal que "dispara" la regla: la que ha cambiado; si no, la primera.
-      const changed = rule.conditions
-        .map((c) => c.signal)
-        .filter((s) => start[s] !== this.memory[s]);
-      const trigger = changed[0] ?? rule.conditions[0].signal;
+      // Señal que "dispara" la regla: una condición cumplida que ha cambiado;
+      // si no hay ninguna, la primera condición cumplida.
+      const met = rule.conditions.filter(isTrue);
+      const changed = met.map((c) => c.signal).filter((s) => start[s] !== this.memory[s]);
+      const trigger = changed[0] ?? met[0]?.signal ?? rule.conditions[0].signal;
       const enabling = rule.conditions.map((c) => c.signal).filter((s) => s !== trigger);
 
       rule.actions.forEach((a) => {
@@ -237,8 +240,11 @@ export function runAutoScenario(signals: Signal[], rules: Rule[], minSteps = 20)
       .filter((x) => sim.states[x.signal] !== x.value);
     if (prep.length) sim.apply(prep, 'Forzado de prueba');
 
-    // Primero los permisivos (nivel) y después los flancos que disparan.
-    const ordered = [...rule.conditions].sort(
+    // De cada grupo «O» basta con cumplir una condición: se usa la primera
+    // que sea una entrada libre. Primero los permisivos (nivel) y después
+    // los flancos que disparan.
+    const chosen = conditionGroups(rule.conditions).map((g) => g.find((c) => inputs.has(c.signal)) ?? g[0]);
+    const ordered = [...chosen].sort(
       (a, b) => Number(isEdge(a.event)) - Number(isEdge(b.event)),
     );
     ordered.forEach((c) => {

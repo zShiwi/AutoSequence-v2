@@ -70,7 +70,8 @@ export function renderLadder(rungs: LadderRung[], symbols: SymbolEntry[]): { svg
       y += 28;
     }
     const coils = Math.max(1, rg.coils.length);
-    const h = HEAD + PAD_Y + (coils - 1) * BRANCH_GAP + PAD_Y + 14;
+    const branches = Math.max(1, ...rg.contacts.map((g) => g.length));
+    const h = HEAD + PAD_Y + (Math.max(coils, branches) - 1) * BRANCH_GAP + PAD_Y + 14;
     const wy = y + HEAD + PAD_Y + 8; // línea principal
 
     out.push(
@@ -86,15 +87,26 @@ export function renderLadder(rungs: LadderRung[], symbols: SymbolEntry[]): { svg
       `<path d="M${left} ${railTop}V${railBot}M${right} ${railTop}V${railBot}" style="stroke:${rail};stroke-width:3"/>`,
     );
 
-    // Contactos en serie.
+    // Contactos en serie; cada posición puede tener contactos en paralelo (O).
     let x = left;
-    rg.contacts.forEach((c) => {
+    rg.contacts.forEach((group) => {
       const cx = x + SLOT / 2;
-      out.push(
-        `<path d="M${x} ${wy}H${cx - 7}M${cx + 7} ${wy}H${x + SLOT}" style="stroke:${ink};stroke-width:1.6"/>`,
-        contactSymbol(c.kind, cx, wy),
-        label(cx, wy, c.signal, addressOf(symbols, c.signal)),
-      );
+      const bl = x + 10; // unión izquierda de la rama
+      const br = x + SLOT - 10; // unión derecha
+      group.forEach((c, i) => {
+        const cy = wy + i * BRANCH_GAP;
+        out.push(
+          i === 0
+            ? `<path d="M${x} ${cy}H${cx - 7}M${cx + 7} ${cy}H${x + SLOT}" style="stroke:${ink};stroke-width:1.6"/>`
+            : `<path d="M${bl} ${cy}H${cx - 7}M${cx + 7} ${cy}H${br}" style="stroke:${ink};stroke-width:1.6"/>`,
+          contactSymbol(c.kind, cx, cy),
+          label(cx, cy, c.signal, addressOf(symbols, c.signal)),
+        );
+      });
+      if (group.length > 1) {
+        const bottom = wy + (group.length - 1) * BRANCH_GAP;
+        out.push(`<path d="M${bl} ${wy}V${bottom}M${br} ${wy}V${bottom}" style="stroke:${ink};stroke-width:1.6"/>`);
+      }
       x += SLOT;
     });
 

@@ -13,7 +13,7 @@ type Tab = 'awl' | 'kop' | 'symbols';
 let tab: Tab = 'awl';
 let kopAsText = false;
 
-const KEYWORDS = /^(\s*)(U|UN|O|ON|S|R|=|FP|FN|SPBN|SPB|SPA|NOP|L|T)(\s|$)/;
+const KEYWORDS = /^(\s*)(U\(|\)|UN|U|ON|O|S|R|=|FP|FN|SPBN|SPB|SPA|NOP|L|T)(\s|$)/;
 
 function highlightAwl(code: string): string {
   return code

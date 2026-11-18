@@ -5,6 +5,7 @@ import { allSignalNames, cleanSignals, derivedSignals, isActuatorType } from '..
 import type { Action, ActionValue, Condition, ConditionEvent, Rule } from '../types';
 import { confirmDialog, esc, h, icon, modal, promptDialog, qs, toast } from './dom';
 import type { App } from './app';
+import { conditionGroups } from '../plc/rules';
 
 const EVENTS: { v: ConditionEvent; label: string; chip: string }[] = [
   { v: '==1', label: '= 1  (activa)', chip: '= 1' },
@@ -30,6 +31,19 @@ function condChip(c: Condition, known: Set<string>): string {
   const ev = EVENTS.find((e) => e.v === c.event);
   const missing = !known.has(c.signal);
   return `<span class="chip chip--cond${missing ? ' chip--missing' : ''}"${missing ? ' title="Esta señal no existe"' : ''}><code>${esc(c.signal || '?')}</code><b>${ev?.chip ?? c.event}</b></span>`;
+}
+
+/** Condiciones de una regla: Y entre grupos; los grupos «O» entre paréntesis. */
+function condsHtml(conditions: Condition[], known: Set<string>): string {
+  return conditionGroups(conditions)
+    .map((g) =>
+      g.length === 1
+        ? condChip(g[0], known)
+        : `<span class="or-group"><span class="or-group__paren">(</span>${g
+            .map((c) => condChip(c, known))
+            .join('<span class="kw kw--or">O</span>')}<span class="or-group__paren">)</span></span>`,
+    )
+    .join('<span class="kw kw--and">Y</span>');
 }
 
 function actChip(a: Action, known: Set<string>): string {
@@ -106,7 +120,7 @@ export function renderLogic(app: App): HTMLElement {
               <div class="rule__title">${esc(r.name)}${missing ? `<span class="badge badge--warn">${icon('alert', 13)}Señal inexistente</span>` : ''}</div>
               <div class="rule__logic">
                 <span class="kw">SI</span>
-                ${r.conditions.map((c) => condChip(c, known)).join('<span class="kw kw--and">Y</span>')}
+                ${condsHtml(r.conditions, known)}
                 <span class="kw kw--then">${icon('chevronRight', 14)} ENTONCES</span>
                 ${r.actions.map((a) => actChip(a, known)).join('')}
               </div>
@@ -261,7 +275,7 @@ export function renderLogic(app: App): HTMLElement {
           <input id="rule-name" class="input" data-slot="name" value="${esc(draft.name)}" placeholder="Se genera a partir de las señales" />
         </div>
         <fieldset class="editor__group">
-          <legend><span class="kw">SI</span> se cumplen todas estas condiciones</legend>
+          <legend><span class="kw">SI</span> se cumplen estas condiciones <span class="muted">· Y = en serie, O = en paralelo con la anterior</span></legend>
           <div data-slot="conds" class="editor__rows"></div>
           <button type="button" class="btn btn--ghost btn--sm" data-act="add-cond">${icon('plus', 15)}<span>Añadir condición</span></button>
         </fieldset>
@@ -282,10 +296,7 @@ export function renderLogic(app: App): HTMLElement {
 
     const updatePreview = () => {
       const known = new Set(allSignalNames(signals));
-      preview.innerHTML = `<span class="kw">SI</span>${draft.conditions
-        .filter((c) => c.signal)
-        .map((c) => condChip(c, known))
-        .join('<span class="kw kw--and">Y</span>') || '<span class="muted">…</span>'}<span class="kw kw--then">${icon('chevronRight', 14)} ENTONCES</span>${draft.actions
+      preview.innerHTML = `<span class="kw">SI</span>${condsHtml(draft.conditions.filter((c) => c.signal), known) || '<span class="muted">…</span>'}<span class="kw kw--then">${icon('chevronRight', 14)} ENTONCES</span>${draft.actions
         .filter((a) => a.signal)
         .map((a) => actChip(a, known))
         .join('') || '<span class="muted">…</span>'}`;
@@ -297,7 +308,14 @@ export function renderLogic(app: App): HTMLElement {
         .map(
           (c, i) => `
           <div class="editor__row" data-i="${i}">
-            <span class="editor__join">${i === 0 ? '' : 'Y'}</span>
+            ${
+              i === 0
+                ? '<span class="editor__join"></span>'
+                : `<select class="input input--join" data-c="op" aria-label="Unión con la condición anterior" title="Y: en serie · O: en paralelo con la anterior">
+                     <option value="AND"${c.operator !== 'OR' ? ' selected' : ''}>Y</option>
+                     <option value="OR"${c.operator === 'OR' ? ' selected' : ''}>O</option>
+                   </select>`
+            }
             <select class="input input--mono" data-c="signal" aria-label="Señal">${condOptions(c.signal)}</select>
             <select class="input" data-c="event" aria-label="Condición">${EVENTS.map((e) => `<option value="${e.v}"${e.v === c.event ? ' selected' : ''}>${e.label}</option>`).join('')}</select>
             <button type="button" class="icon-btn icon-btn--danger" data-c="del" aria-label="Quitar condición"${draft.conditions.length < 2 ? ' disabled' : ''}>${icon('x', 16)}</button>
@@ -325,6 +343,7 @@ export function renderLogic(app: App): HTMLElement {
       const i = Number(row.dataset.i);
       if (t.dataset.c === 'signal') draft.conditions[i].signal = t.value;
       if (t.dataset.c === 'event') draft.conditions[i].event = t.value as ConditionEvent;
+      if (t.dataset.c === 'op') draft.conditions[i].operator = t.value === 'OR' ? 'OR' : 'AND';
       if (t.dataset.a === 'signal') draft.actions[i].signal = t.value;
       if (t.dataset.a === 'value') draft.actions[i].value = t.value as ActionValue;
       updatePreview();
@@ -357,7 +376,11 @@ export function renderLogic(app: App): HTMLElement {
       }
       const rule: Rule = {
         id: original?.id ?? Date.now(),
-        conditions: cs.map((c) => ({ ...c, delay: 0, operator: 'AND' })),
+        conditions: cs.map((c, i) => ({
+          ...c,
+          delay: 0,
+          operator: i > 0 && c.operator === 'OR' ? 'OR' : 'AND',
+        })),
         actions: as,
         name: nameInput.value.trim() || autoName({ conditions: cs, actions: as }),
       };

@@ -7,6 +7,7 @@
  */
 
 import type { Block, ConditionEvent, ActionValue } from '../types';
+import { conditionGroups } from './rules';
 
 export type ContactKind = 'NO' | 'NC' | 'P' | 'N';
 export type CoilKind = 'S' | 'R' | 'T';
@@ -25,7 +26,8 @@ export interface LadderRung {
   number: number;
   title: string;
   block: string;
-  contacts: LadderContact[];
+  /** Posiciones en serie; cada una con uno o varios contactos en paralelo. */
+  contacts: LadderContact[][];
   coils: LadderCoil[];
 }
 
@@ -47,7 +49,9 @@ export function ladderModel(blocks: Block[]): LadderRung[] {
         number: rungs.length + 1,
         title: r.name,
         block: b.name,
-        contacts: r.conditions.map((c) => ({ signal: c.signal, kind: CONTACT[c.event] })),
+        contacts: conditionGroups(r.conditions).map((g) =>
+          g.map((c) => ({ signal: c.signal, kind: CONTACT[c.event] })),
+        ),
         coils: r.actions.map((a) => ({ signal: a.signal, kind: COIL[a.value] })),
       });
     }),
@@ -76,7 +80,13 @@ export function generateKOP(blocks: Block[]): string {
       out.push(`// ==== BLOQUE: ${block} ====`, '');
     }
     out.push(`Network ${rg.number}: ${rg.title}`);
-    const series = rg.contacts.map((c) => CONTACT_TXT[c.kind](c.signal)).join('  ');
+    const series = rg.contacts
+      .map((g) =>
+        g.length === 1
+          ? CONTACT_TXT[g[0].kind](g[0].signal)
+          : `(${g.map((c) => CONTACT_TXT[c.kind](c.signal)).join(' ║ ')})`,
+      )
+      .join('  ');
     rg.coils.forEach((c, i) => {
       const lead = i === 0 ? `  ║${series}  ` : `  ║${' '.repeat(series.length + 2)}`;
       out.push(`${lead}──${COIL_TXT[c.kind]} ${c.signal}`);

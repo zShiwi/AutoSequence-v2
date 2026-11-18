@@ -9,6 +9,16 @@
  */
 
 import type { Block, Cajetin, Project, Rule, Signal } from '../types';
+import {
+  buildFullBackup,
+  markBackupDone,
+  maybeSaveVersion,
+  moveToTrash,
+  readVersion,
+  saveVersion,
+  takeFromTrash,
+  type FullBackup,
+} from './backups';
 
 const STORAGE_KEY = 'autosequence_projects';
 const SAVE_DELAY = 400;
@@ -123,8 +133,53 @@ export function createProject(
   return { ok: true, project };
 }
 
+/** Mueve el proyecto a la papelera (recuperable durante TRASH_DAYS días). */
 export function deleteProject(id: string): void {
-  writeProjects(loadProjects().filter((p) => p.id !== id));
+  const all = loadProjects();
+  const p = all.find((x) => x.id === id);
+  if (p) moveToTrash(p);
+  writeProjects(all.filter((x) => x.id !== id));
+}
+
+export function restoreFromTrash(id: string): Project | null {
+  const p = takeFromTrash(id);
+  if (!p) return null;
+  let name = p.name;
+  let n = 2;
+  while (nameTaken(name)) name = `${p.name} (${n++})`;
+  const restored = normalize({ ...p, name });
+  upsert(restored);
+  return restored;
+}
+
+/** Copia completa de todos los proyectos (y marca la fecha de la copia). */
+export function exportAllJSON(): string {
+  flushSave();
+  const json = buildFullBackup(loadProjects());
+  markBackupDone();
+  return json;
+}
+
+/** Importa un proyecto exportado o una copia completa de varios. */
+export function importFile(json: string): { ok: true; imported: Project[] } | { ok: false; error: string } {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return { ok: false, error: 'El archivo no es un JSON válido.' };
+  }
+  const backup = data as Partial<FullBackup>;
+  if (backup && backup.format === 'autosequence-backup' && Array.isArray(backup.projects)) {
+    const imported: Project[] = [];
+    for (const p of backup.projects) {
+      const r = importProject(JSON.stringify(p));
+      if (r.ok) imported.push(r.project);
+    }
+    if (!imported.length) return { ok: false, error: 'La copia de seguridad no contiene proyectos válidos.' };
+    return { ok: true, imported };
+  }
+  const r = importProject(json);
+  return r.ok ? { ok: true, imported: [r.project] } : r;
 }
 
 export function duplicateProject(id: string): Project | null {
@@ -177,13 +232,89 @@ export function openProject(id: string): boolean {
   if (!p) return false;
   session.project = p;
   upsert(p); // fija el id en proyectos antiguos
+  resetHistory();
   emit();
+  return true;
+}
+
+// ---- Deshacer / rehacer ----------------------------------------------------
+
+const UNDO_MAX = 100;
+/** Cambios separados por menos de esto se agrupan en un solo paso. */
+const UNDO_GROUP_MS = 1000;
+const undoStack: string[] = [];
+const redoStack: string[] = [];
+let baseline: string | null = null;
+let lastCommitAt = 0;
+
+function snapshot(p: Project): string {
+  return JSON.stringify({ ...p, updatedAt: 0 });
+}
+
+function resetHistory(): void {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  baseline = session.project ? snapshot(session.project) : null;
+  lastCommitAt = 0;
+}
+
+/** Registra el estado anterior al cambio que se acaba de hacer. */
+function recordChange(p: Project): void {
+  const snap = snapshot(p);
+  const now = Date.now();
+  if (baseline !== null && snap !== baseline) {
+    if (now - lastCommitAt > UNDO_GROUP_MS || !undoStack.length) {
+      undoStack.push(baseline);
+      if (undoStack.length > UNDO_MAX) undoStack.shift();
+    }
+    redoStack.length = 0;
+  }
+  baseline = snap;
+  lastCommitAt = now;
+}
+
+/** Sustituye el contenido del proyecto abierto manteniendo el mismo objeto. */
+function restoreSnapshot(json: string): void {
+  const p = session.project!;
+  const data = JSON.parse(json) as Project;
+  Object.keys(p).forEach((k) => delete (p as unknown as Record<string, unknown>)[k]);
+  Object.assign(p, data, { id: p.id ?? data.id, updatedAt: Date.now() });
+  baseline = snapshot(p);
+  lastCommitAt = 0;
+  session.saveStatus = 'pending';
+  flushSave();
+  emit();
+}
+
+export function canUndo(): boolean {
+  return undoStack.length > 0;
+}
+
+export function canRedo(): boolean {
+  return redoStack.length > 0;
+}
+
+export function undo(): boolean {
+  const p = session.project;
+  if (!p || !undoStack.length) return false;
+  flushSave();
+  redoStack.push(snapshot(p));
+  restoreSnapshot(undoStack.pop()!);
+  return true;
+}
+
+export function redo(): boolean {
+  const p = session.project;
+  if (!p || !redoStack.length) return false;
+  undoStack.push(snapshot(p));
+  restoreSnapshot(redoStack.pop()!);
   return true;
 }
 
 export function closeProject(): void {
   flushSave();
   session.project = null;
+  resetHistory();
   emit();
 }
 
@@ -195,6 +326,7 @@ export function commit(): void {
   if (!p) return;
   p.updatedAt = Date.now();
   p.rules = p.blocks.flatMap((b) => b.rules);
+  recordChange(p);
   session.saveStatus = 'pending';
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(flushSave, SAVE_DELAY);
@@ -207,8 +339,35 @@ export function flushSave(): void {
   if (!p || session.saveStatus !== 'pending') return;
   const ok = upsert(p);
   session.saveStatus = ok ? 'saved' : 'error';
-  if (ok) session.lastSaved = Date.now();
+  if (ok) {
+    session.lastSaved = Date.now();
+    maybeSaveVersion(p);
+  }
   emit();
+}
+
+/** Guarda ahora una versión con nombre del proyecto abierto. */
+export function saveNamedVersion(label: string): void {
+  if (!session.project) return;
+  flushSave();
+  saveVersion(session.project, label);
+}
+
+/**
+ * Vuelve a una versión guardada. Antes guarda el estado actual como versión
+ * y lo deja en «deshacer», así restaurar nunca hace perder trabajo.
+ */
+export function restoreVersion(ts: number): boolean {
+  const p = session.project;
+  if (!p?.id) return false;
+  const data = readVersion(p.id, ts);
+  if (!data) return false;
+  flushSave();
+  saveVersion(p, 'Antes de restaurar');
+  undoStack.push(snapshot(p));
+  redoStack.length = 0;
+  restoreSnapshot(JSON.stringify({ ...normalize({ ...data, id: p.id }), id: p.id }));
+  return true;
 }
 
 export function renameProject(name: string): string | null {

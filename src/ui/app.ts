@@ -18,7 +18,12 @@ import {
   session,
   subscribe,
   allRules,
+  canRedo,
+  canUndo,
+  redo,
+  undo,
 } from '../state/store';
+import { openVersions } from './backups';
 import { download, esc, h, icon, promptDialog, qs, slug, toast } from './dom';
 import { renderHome } from './home';
 import { renderSignals } from './signals';
@@ -64,7 +69,43 @@ export class App {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushSave();
     });
+    document.addEventListener('keydown', (e) => this.onKey(e));
     this.route();
+  }
+
+  // ---- Deshacer / rehacer ------------------------------------------------
+
+  private onKey(e: KeyboardEvent): void {
+    if (!session.project || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    const isUndo = key === 'z' && !e.shiftKey;
+    const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+    if (!isUndo && !isRedo) return;
+    // En un campo de texto, Ctrl+Z deshace lo escrito en ese campo.
+    const t = e.target as HTMLElement | null;
+    const typing =
+      t &&
+      ((t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'file'].includes((t as HTMLInputElement).type)) ||
+        t.tagName === 'TEXTAREA' ||
+        t.isContentEditable);
+    if (typing || document.querySelector('.modal-backdrop')) return;
+    e.preventDefault();
+    if (isUndo) this.undo();
+    else this.redo();
+  }
+
+  undo(): void {
+    if (undo()) {
+      this.refresh();
+      toast('Cambio deshecho.', 'info', 1800);
+    } else toast('No hay nada que deshacer.', 'info', 1600);
+  }
+
+  redo(): void {
+    if (redo()) {
+      this.refresh();
+      toast('Cambio rehecho.', 'info', 1800);
+    } else toast('No hay nada que rehacer.', 'info', 1600);
   }
 
   // ---- Navegación --------------------------------------------------------
@@ -166,6 +207,11 @@ export class App {
         </div>
         <div class="topbar__right">
           ${inProject ? `<span class="save-state" data-slot="save" aria-live="polite"></span>
+             <div class="topbar__group" role="group" aria-label="Historial de cambios">
+               <button class="icon-btn" data-act="undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">${icon('undo', 18)}</button>
+               <button class="icon-btn" data-act="redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">${icon('redo', 18)}</button>
+               <button class="icon-btn" data-act="versions" title="Versiones guardadas" aria-label="Versiones guardadas">${icon('history', 18)}</button>
+             </div>
              <button class="btn btn--ghost btn--sm" data-act="export" title="Descargar el proyecto como archivo .json">${icon('download', 16)}<span>Exportar</span></button>` : ''}
           <button class="icon-btn" data-act="theme" aria-label="Cambiar tema claro/oscuro" title="Cambiar tema">${icon('moon', 18)}</button>
         </div>
@@ -174,6 +220,9 @@ export class App {
 
   private bindTopbar(): void {
     this.root.querySelector('[data-act="theme"]')?.addEventListener('click', toggleTheme);
+    this.root.querySelector('[data-act="undo"]')?.addEventListener('click', () => this.undo());
+    this.root.querySelector('[data-act="redo"]')?.addEventListener('click', () => this.redo());
+    this.root.querySelector('[data-act="versions"]')?.addEventListener('click', () => openVersions(this));
     this.root.querySelector('[data-act="export"]')?.addEventListener('click', () => {
       const p = session.project;
       if (!p) return;
@@ -213,6 +262,8 @@ export class App {
     const pname = this.root.querySelector('[data-slot="pname"]');
     if (pname) pname.textContent = p.name;
     this.refreshSaveStatus();
+    this.root.querySelector<HTMLButtonElement>('[data-act="undo"]')?.toggleAttribute('disabled', !canUndo());
+    this.root.querySelector<HTMLButtonElement>('[data-act="redo"]')?.toggleAttribute('disabled', !canRedo());
 
     const list = this.root.querySelector('.steps');
     if (!list) return;
