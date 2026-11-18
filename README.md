@@ -47,11 +47,18 @@ los cilindros tardan su tiempo en abrir; las estaciones (robots) trabajan su
 tiempo de ciclo y activan su señal de liberación. Los sensores se calculan de
 la posición real y el PLC reacciona con sus reglas.
 
+El transportador es un **lazo vertical**: las paletas van por el ramal de
+arriba, bajan por una curva y vuelven colgadas por el de abajo. **Aéreo** (va
+alto, se carga por abajo: pre-carga arriba; carga y descarga abajo) o **de
+suelo** (va bajo, se carga por arriba). El motor va por defecto en la curva
+donde suben las paletas.
+
 La vista 3D (three.js, `src/plant/view3d.ts`, se carga solo al abrirla) muestra
-el bastidor con sus patas, las cadenas en movimiento, las paletas, los topes que
-suben y bajan (rojo cerrado, verde abierto) y los sensores con su LED, todos con
+los perfiles con las dos cadenas en movimiento, las ruedas de las curvas, el
+motorreductor, las paletas (de pie arriba, colgando abajo), los topes que salen
+y se recogen (rojo cerrado, verde abierto) y los sensores con su LED, todos con
 su nombre. Las paletas se añaden o quitan en marcha para probar acumulaciones.
-También hay una vista en plano.
+Sin tarjeta gráfica arranca en modo ligero y baja la calidad sola si va lenta.
 
 ## Correcciones respecto al prototipo
 

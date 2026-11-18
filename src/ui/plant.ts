@@ -18,7 +18,9 @@ import { Plant } from '../plant/engine';
 import {
   PRESENCE_BEFORE_STOP,
   defaultLayout,
+  liftEnd,
   loopLength,
+  motorEnd,
   pointAt,
   sensorS,
   stopS,
@@ -96,7 +98,7 @@ export function renderPlant(app: App): HTMLElement {
         <span class="toolbar__spacer"></span>
         <div class="segmented segmented--sm" role="radiogroup" aria-label="Vista">
           <button role="radio" data-view="3d" class="${ui.view === '3d' ? 'is-active' : ''}" aria-checked="${ui.view === '3d'}">3D</button>
-          <button role="radio" data-view="plan" class="${ui.view === 'plan' ? 'is-active' : ''}" aria-checked="${ui.view === 'plan'}">Plano</button>
+          <button role="radio" data-view="plan" class="${ui.view === 'plan' ? 'is-active' : ''}" aria-checked="${ui.view === 'plan'}">Esquema</button>
         </div>
         ${use3d ? `<label class="check"><input type="checkbox" data-pl-labels${ui.labels ? ' checked' : ''}/> Nombres</label>` : ''}
         <button class="btn btn--ghost btn--sm${ui.editing ? ' is-pressed' : ''}" data-pl="edit" aria-pressed="${ui.editing}">${icon('edit', 15)}<span>Medidas y posiciones</span></button>
@@ -144,7 +146,7 @@ export function renderPlant(app: App): HTMLElement {
         canvas.insertAdjacentHTML(
           'beforeend',
           `<div class="plant3d__cams segmented segmented--sm" role="group" aria-label="Cámara">
-            <button data-cam="general">General</button><button data-cam="planta">Planta</button><button data-cam="frontal">Frontal</button>
+            <button data-cam="general">General</button><button data-cam="lateral">Lateral</button><button data-cam="superior">Superior</button>
           </div>
           <p class="plant3d__hint">Arrastra para girar · rueda para acercar · botón derecho para desplazar</p>`,
         );
@@ -336,17 +338,23 @@ function setupForm(signals: Signal[], done: () => void): HTMLElement {
         <div class="empty__art" aria-hidden="true">${icon('conveyor', 30)}</div>
         <div>
           <h2>Configura el transportador</h2>
-          <p class="muted">Indica sus medidas. Después colocarás cada tope y los sensores de línea por su distancia.</p>
+          <p class="muted">Lazo vertical: las paletas van por el ramal de arriba, bajan por una curva y vuelven colgadas por el de abajo. Indica el tipo y las medidas; después colocarás cada tope y los sensores por su distancia.</p>
         </div>
       </div>
       <form class="form-grid form-grid--2" novalidate>
-        ${numField('length', 'Longitud del transportador', base.length, 'mm', 'Distancia entre los ejes de los tambores.')}
+        <fieldset class="kind-pick">
+          <legend class="field__label">Tipo de transportador</legend>
+          <label class="kind-opt"><input type="radio" name="kind" value="aereo" checked /><span><b>Aéreo</b><small>Va alto y se carga por abajo: carga y descarga en el ramal inferior, pre-carga arriba.</small></span></label>
+          <label class="kind-opt"><input type="radio" name="kind" value="suelo" /><span><b>De suelo</b><small>Va bajo y se carga por arriba: carga y descarga en el ramal superior.</small></span></label>
+        </fieldset>
+        ${numField('length', 'Longitud del transportador', base.length, 'mm', 'Distancia entre los ejes de las dos curvas.')}
         ${numField('radius', 'Radio de las curvas', base.radius, 'mm')}
         <label class="field"><span class="field__label">Sentido de avance</span>
           <select class="input" name="direction">
             <option value="ccw">Abajo hacia la derecha · arriba hacia la izquierda</option>
             <option value="cw">Arriba hacia la derecha · abajo hacia la izquierda</option>
-          </select></label>
+          </select>
+          <span class="field__hint">El motor irá en la curva donde suben las paletas.</span></label>
         <label class="field"><span class="field__label">Motor del transportador</span>
           <select class="input" name="motor">
             ${motors.map((m) => `<option value="${esc(m.name)}"${m.name === base.motor ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}
@@ -365,8 +373,10 @@ function setupForm(signals: Signal[], done: () => void): HTMLElement {
   qs(el, '[data-act="create"]').addEventListener('click', () => {
     const f = qs<HTMLFormElement>(el, 'form');
     const num = (n: string) => Number((f.elements.namedItem(n) as HTMLInputElement).value);
+    const kind = (f.querySelector<HTMLInputElement>('input[name="kind"]:checked')?.value ?? 'aereo') as NonNullable<ConveyorLayout['kind']>;
     const layout: ConveyorLayout = {
       ...base,
+      kind,
       length: num('length'),
       radius: num('radius'),
       direction: (f.elements.namedItem('direction') as HTMLSelectElement).value as ConveyorLayout['direction'],
@@ -380,7 +390,7 @@ function setupForm(signals: Signal[], done: () => void): HTMLElement {
       toast('Revisa las medidas: deben ser mayores que 0.', 'error');
       return;
     }
-    layout.stops = defaultLayout(signals).stops.map((s) => ({ ...s, x: Math.round((s.x / base.length) * layout.length) }));
+    layout.stops = defaultLayout(signals, kind).stops.map((s) => ({ ...s, x: Math.round((s.x / base.length) * layout.length) }));
     project().layout = layout;
     commit();
     toast('Transportador creado. Ahora coloca los topes y sensores.');
@@ -415,7 +425,7 @@ function layoutEditor(
     list.map((s) => `<option value="${esc(s.name)}"${s.name === sel ? ' selected' : ''} title="${esc(s.description)}">${esc(s.name)}</option>`).join('') +
     (sel && !list.some((s) => s.name === sel) ? `<option value="${esc(sel)}" selected>${esc(sel)} (no existe)</option>` : '');
   const lineOpt = (v: ConveyorLine) =>
-    `<option value="bottom"${v === 'bottom' ? ' selected' : ''}>Abajo</option><option value="top"${v === 'top' ? ' selected' : ''}>Arriba</option>`;
+    `<option value="bottom"${v === 'bottom' ? ' selected' : ''}>Ramal de abajo</option><option value="top"${v === 'top' ? ' selected' : ''}>Ramal de arriba</option>`;
   const sigByName = new Map(signals.map((s) => [s.name, s]));
 
   const el = h(`
@@ -431,6 +441,11 @@ function layoutEditor(
         ${numField('palletGap', 'Separación mínima', layout.palletGap, 'mm')}
         ${numField('speed', 'Velocidad', layout.speed, 'mm/s', `${((layout.speed * 60) / 1000).toFixed(1)} m/min`)}
         ${numField('pallets', 'Paletas', layout.pallets, 'uds')}
+        <label class="field"><span class="field__label">Tipo</span>
+          <select class="input" name="kind">
+            <option value="aereo"${(layout.kind ?? 'aereo') === 'aereo' ? ' selected' : ''}>Aéreo · se carga por abajo</option>
+            <option value="suelo"${layout.kind === 'suelo' ? ' selected' : ''}>De suelo · se carga por arriba</option>
+          </select></label>
         <label class="field"><span class="field__label">Sentido</span>
           <select class="input" name="direction">
             <option value="ccw"${layout.direction === 'ccw' ? ' selected' : ''}>Abajo → · arriba ←</option>
@@ -438,6 +453,12 @@ function layoutEditor(
           </select></label>
         <label class="field"><span class="field__label">Motor</span>
           <select class="input" name="motor">${opt(motors, layout.motor, 'Sin motor')}</select></label>
+        <label class="field"><span class="field__label">Motor en la curva</span>
+          <select class="input" name="motorEnd">
+            <option value=""${!layout.motorEnd ? ' selected' : ''}>Donde suben las paletas (${liftEnd(layout) === 'right' ? 'derecha' : 'izquierda'})</option>
+            <option value="left"${layout.motorEnd === 'left' ? ' selected' : ''}>Izquierda</option>
+            <option value="right"${layout.motorEnd === 'right' ? ' selected' : ''}>Derecha</option>
+          </select></label>
       </div>
 
       <h3 class="plant-editor__title">Topes <span class="muted small">· los inductivos de activo/reposo y el sensor de presencia van en el propio tope</span></h3>
@@ -521,6 +542,11 @@ function layoutEditor(
     if (group === 'dims') {
       const n = t.name as keyof ConveyorLayout;
       if (n === 'direction') layout.direction = t.value as ConveyorLayout['direction'];
+      else if (n === 'kind') layout.kind = t.value as NonNullable<ConveyorLayout['kind']>;
+      else if (n === 'motorEnd') {
+        if (t.value) layout.motorEnd = t.value as 'left' | 'right';
+        else delete layout.motorEnd;
+      }
       else if (n === 'motor') layout.motor = t.value || undefined;
       else {
         const v = Number(t.value);
@@ -680,8 +706,9 @@ function buildScene(layout: ConveyorLayout, signals: Signal[]): Scene {
   );
   // Motor.
   if (layout.motor) {
+    const mx = motorEnd(layout) === 'right' ? X(S + R) + 28 : X(-R) - 28;
     out.push(
-      `<g class="pl-motor" data-motor><circle cx="${r1(X(S + R) + 28)}" cy="${r1(Y(0))}" r="13"/><text x="${r1(X(S + R) + 28)}" y="${r1(Y(0)) + 4}" text-anchor="middle">M</text><text class="pl-label" x="${r1(X(S + R) + 28)}" y="${r1(Y(0)) + 30}" text-anchor="middle">${esc(layout.motor)}</text></g>`,
+      `<g class="pl-motor" data-motor><circle cx="${r1(mx)}" cy="${r1(Y(0))}" r="13"/><text x="${r1(mx)}" y="${r1(Y(0)) + 4}" text-anchor="middle">M</text><text class="pl-label" x="${r1(mx)}" y="${r1(Y(0)) + 30}" text-anchor="middle">${esc(layout.motor)}</text></g>`,
     );
   }
 

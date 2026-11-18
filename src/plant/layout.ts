@@ -164,31 +164,46 @@ function dedupe(list: LayoutIssue[]): LayoutIssue[] {
 
 // ---- Layouts por defecto --------------------------------------------------
 
-export function defaultLayout(signals: Signal[]): ConveyorLayout {
+/** Curva donde las paletas suben (la que más esfuerzo pide al motor). */
+export function liftEnd(l: Pick<ConveyorLayout, 'direction'>): 'left' | 'right' {
+  return l.direction === 'cw' ? 'left' : 'right';
+}
+
+export function motorEnd(l: ConveyorLayout): 'left' | 'right' {
+  return l.motorEnd ?? liftEnd(l);
+}
+
+/**
+ * Layout inicial. Aéreo: el primer tope (pre-carga) arriba y el resto abajo,
+ * donde se carga y descarga. De suelo, al revés.
+ */
+export function defaultLayout(signals: Signal[], kind: ConveyorLayout['kind'] = 'aereo'): ConveyorLayout {
   const cylinders = signals.filter((s) => s.type === 'Cilindro' && !validateSignalName(s.name));
   const motor = signals.find((s) => s.type === 'Motor');
   const sensors = new Set(signals.filter((s) => s.type === 'Sensor').map((s) => s.name));
   const length = 6000;
-  const perLine = Math.ceil(cylinders.length / 2);
+  const work: ConveyorLine = kind === 'suelo' ? 'top' : 'bottom';
+  const other: ConveyorLine = work === 'top' ? 'bottom' : 'top';
+  const onWork = cylinders.length > 1 ? cylinders.length - 1 : cylinders.length;
   return {
     length,
     radius: 300,
     direction: 'ccw',
+    kind,
     palletLength: 400,
     palletGap: 20,
     speed: 250,
     pallets: Math.max(2, Math.min(8, cylinders.length + 2)),
     motor: motor?.name,
     stops: cylinders.map((c, i) => {
-      const onBottom = i < perLine;
-      const k = onBottom ? i : i - perLine;
-      const n = onBottom ? perLine : cylinders.length - perLine;
+      const first = i === 0 && cylinders.length > 1; // pre-carga, en el otro ramal
+      const k = first ? 0 : cylinders.length > 1 ? i - 1 : i;
       return {
         cylinder: c.name,
         // La presencia enlazada al cilindro en Señales va en el propio tope.
         ...(c.presence && sensors.has(c.presence) ? { presence: c.presence } : {}),
-        line: onBottom ? 'bottom' : 'top',
-        x: Math.round(((k + 1) * length) / (n + 1)),
+        line: first ? other : work,
+        x: first ? Math.round(length * 0.15) : Math.round(((k + 1) * length) / (onWork + 1)),
         travelMs: 300,
       } satisfies LayoutStop;
     }),
@@ -212,6 +227,7 @@ export function acu4Layout(): ConveyorLayout {
     length: 6000,
     radius: 300,
     direction: 'ccw',
+    kind: 'aereo',
     palletLength: 400,
     palletGap: 20,
     speed: 250,

@@ -88,6 +88,7 @@ export interface Cajetin {
 // ---- Transportador (simulación visual) -------------------------------------
 
 export type ConveyorLine = 'top' | 'bottom';
+export type ConveyorKind = 'aereo' | 'suelo';
 
 /**
  * Tope neumático del transportador. Sus inductivos de activo/reposo son los
@@ -152,6 +153,14 @@ export interface ConveyorLayout {
   pallets: number;
   /** Señal del motor; sin motor, la cadena siempre avanza. */
   motor?: string;
+  /**
+   * Lazo vertical: las paletas van por el ramal de arriba y vuelven colgadas
+   * por el de abajo. Aéreo (por defecto): se carga por abajo. De suelo: se
+   * carga por arriba.
+   */
+  kind?: ConveyorKind;
+  /** Extremo del motor; por defecto, la curva donde suben las paletas. */
+  motorEnd?: 'left' | 'right';
   stops: LayoutStop[];
   sensors: LayoutSensor[];
   stations: LayoutStation[];

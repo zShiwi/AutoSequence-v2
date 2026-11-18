@@ -1,13 +1,17 @@
 /**
  * Vista 3D del transportador (three.js).
  *
- * Transportador de doble cadena sobre perfiles de aluminio con patas, módulos
- * de curva con rueda dentada, motorreductor, paletas con utillaje, topes
- * neumáticos que suben y bajan y sensores inductivos con LED. Cada elemento
- * lleva su nombre.
+ * El transportador es un lazo VERTICAL: dos cadenas paralelas que pasan por
+ * el ramal de arriba, bajan por una curva, vuelven por el ramal de abajo y
+ * suben por la otra curva. Las paletas van apoyadas por fuera de la cadena:
+ * arriba con el utillaje hacia arriba y abajo colgando boca abajo.
  *
- * Unidades: metros. X a lo largo del transportador (centrado), Z hacia el
- * observador (la recta de abajo del plano queda delante), Y hacia arriba.
+ *  - Aéreo: va alto y se carga por abajo (el ramal de trabajo es el inferior).
+ *  - De suelo: va bajo y se carga por arriba.
+ *
+ * El motor va en la curva donde suben las paletas (salvo que se indique otro
+ * extremo). Unidades: metros. X a lo largo, Y hacia arriba, Z hacia el
+ * observador.
  */
 
 import * as THREE from 'three';
@@ -17,7 +21,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ConveyorLayout, Signal } from '../types';
 import type { Plant } from './engine';
-import { PRESENCE_BEFORE_STOP, loopLength, pointAt, sensorS, stopS } from './layout';
+import { PRESENCE_BEFORE_STOP, loopLength, motorEnd, pointAt, sensorS, stopS } from './layout';
 
 export interface PlantView {
   el: HTMLElement;
@@ -27,11 +31,9 @@ export interface PlantView {
   setCamera(preset: CameraPreset): void;
 }
 
-export type CameraPreset = 'general' | 'planta' | 'frontal';
+export type CameraPreset = 'general' | 'lateral' | 'superior';
 
-const H = 0.85; // altura de la superficie de las cadenas
 const PITCH = 0.05; // paso del dibujo de la cadena (2 eslabones)
-
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 /** Devuelve null si el navegador no puede dibujar WebGL. */
@@ -53,7 +55,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   renderer.setPixelRatio(soft ? 0.75 : Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.92;
+  renderer.toneMappingExposure = 0.95;
   renderer.shadowMap.enabled = !soft;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   el.appendChild(renderer.domElement);
@@ -62,39 +64,42 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   el.appendChild(labelRenderer.domElement);
   if (!opts.labels) el.classList.add('no-labels');
 
+  // ---- Medidas -------------------------------------------------------------
+  const aerial = (layout.kind ?? 'aereo') === 'aereo';
+  const S = layout.length / 1000;
+  const R = layout.radius / 1000;
+  const Lmm = loopLength(layout);
+  const span = S + 2 * R;
+  const plen = layout.palletLength / 1000;
+  const w = Math.min(Math.max(plen * 0.8, 0.2), 0.6); // separación entre cadenas
+  const pw = w + 0.06; // ancho de paleta
+  const HC = aerial ? 2.7 + R : 0.42 + R; // altura del eje de las curvas
+  const mEnd = motorEnd(layout);
+
   // ---- Escena --------------------------------------------------------------
   const css = getComputedStyle(document.documentElement);
   const bg = new THREE.Color(css.getPropertyValue('--surface-2').trim() || '#eef2f4');
   const dark = bg.getHSL({ h: 0, s: 0, l: 0 }).l < 0.4;
   const scene = new THREE.Scene();
   scene.background = bg;
-  scene.fog = new THREE.Fog(bg, 18, 60);
+  scene.fog = new THREE.Fog(bg, 22, 70);
   const pmrem = soft ? null : new THREE.PMREMGenerator(renderer);
   const envTex = pmrem ? pmrem.fromScene(new RoomEnvironment(), 0.04).texture : null;
   scene.environment = envTex;
   const fill = new THREE.AmbientLight(0xffffff, soft ? 0.9 : 0);
   scene.add(fill);
-
-  const S = layout.length / 1000;
-  const R = layout.radius / 1000;
-  const Lmm = loopLength(layout);
-  const span = S + 2 * R;
-  const w = Math.min(Math.max((layout.palletLength / 1000) * 0.8, 0.2), R * 1.4); // ancho de vía (entre cadenas)
-  const pw = w + 0.05; // ancho de paleta
-  const plen = layout.palletLength / 1000;
-
   scene.add(new THREE.HemisphereLight(0xffffff, dark ? 0x202830 : 0x6f767c, dark ? 0.5 : 0.55));
   const sun = new THREE.DirectionalLight(0xffffff, dark ? 1.6 : 2.1);
-  sun.position.set(-span * 0.35, 9, 6);
+  sun.position.set(-span * 0.3, HC + 8, 7);
   sun.castShadow = !soft;
   sun.shadow.mapSize.set(1024, 1024);
   const sc = sun.shadow.camera;
-  sc.left = -span / 2 - 3;
-  sc.right = span / 2 + 3;
-  sc.top = 2 * R + 4;
-  sc.bottom = -2 * R - 4;
+  sc.left = -span / 2 - 2;
+  sc.right = span / 2 + 2;
+  sc.top = 4;
+  sc.bottom = -4;
   sc.near = 1;
-  sc.far = 30;
+  sc.far = 40;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.02;
   scene.add(sun);
@@ -102,10 +107,9 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const camera = new THREE.PerspectiveCamera(35, 16 / 9, 0.05, 200);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.maxPolarAngle = Math.PI / 2 - 0.04;
-  controls.minDistance = 0.8;
-  controls.maxDistance = span * 4 + 10;
-  controls.target.set(0, 0.6, 0);
+  controls.maxPolarAngle = Math.PI - 0.05;
+  controls.minDistance = 0.6;
+  controls.maxDistance = span * 4 + 12;
 
   // ---- Materiales -----------------------------------------------------------
   const mats: THREE.Material[] = [];
@@ -120,12 +124,14 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const steel = mat({ color: 0x7d868e, metalness: 0.7, roughness: 0.38 });
   const darkSteel = mat({ color: 0x3b4148, metalness: 0.6, roughness: 0.5 });
   const black = mat({ color: 0x1d2125, metalness: 0.2, roughness: 0.75 });
-  const guide = mat({ color: 0xe8e3d6, metalness: 0, roughness: 0.6 }); // guía de plástico
+  const guide = mat({ color: 0xe8e3d6, metalness: 0, roughness: 0.6 });
   const cylDark = mat({ color: 0x2e3338, metalness: 0.5, roughness: 0.5 });
   const fixtureBlue = mat({ color: 0x2f5f8a, metalness: 0.55, roughness: 0.35 });
   const motorBlue = mat({ color: 0x35536f, metalness: 0.45, roughness: 0.45 });
+  const guard = mat({ color: 0xe8901c, metalness: 0.2, roughness: 0.5, transparent: true, opacity: 0.18, depthWrite: false });
   const floorMat = mat({ color: dark ? 0x232b33 : 0xb9c0c6, metalness: 0, roughness: 0.92 });
   const yellow = mat({ color: 0xf2c200, metalness: 0, roughness: 0.6 });
+  const arrowMat = mat({ color: 0xf2c200, roughness: 0.5 });
 
   const chainTex = chainTexture();
   chainTex.wrapS = THREE.RepeatWrapping;
@@ -162,39 +168,42 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     }
   };
 
-  // ---- Geometría del lazo --------------------------------------------------
-  interface Sample {
-    x: number;
-    z: number;
-    nx: number;
-    nz: number;
-    s: number;
-  }
+  // ---- Geometría del lazo (en alzado) ----------------------------------------
+  /** Punto del lazo: posición, sentido de avance y normal hacia fuera (plano XY). */
   const at = (smm: number) => {
     const p = pointAt(layout, smm);
     const cx = Math.max(0, Math.min(layout.length, p.x));
     let nx = p.x - cx;
-    let nz = p.y;
-    const m = Math.hypot(nx, nz) || 1;
+    let ny = -p.y; // en el plano, y crece hacia abajo
+    const m = Math.hypot(nx, ny) || 1;
     nx /= m;
-    nz /= m;
-    return { x: p.x / 1000 - S / 2, z: p.y / 1000, h: p.heading, nx, nz, line: p.line };
+    ny /= m;
+    return { x: p.x / 1000 - S / 2, y: HC - p.y / 1000, dx: Math.cos(p.heading), dy: -Math.sin(p.heading), nx, ny };
   };
-  const N = Math.max(80, Math.ceil(Lmm / 20));
-  const samples: Sample[] = [];
+  type At = ReturnType<typeof at>;
+  /** Orienta un objeto: X local = avance, Y local = hacia fuera del lazo. */
+  const orient = (o: THREE.Object3D, p: At) => {
+    const xA = new THREE.Vector3(p.dx, p.dy, 0);
+    const yA = new THREE.Vector3(p.nx, p.ny, 0);
+    const zA = new THREE.Vector3().crossVectors(xA, yA);
+    o.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, zA));
+    o.position.set(p.x, p.y, 0);
+  };
+  const world = (p: At, d: number, z: number) => new THREE.Vector3(p.x + p.nx * d, p.y + p.ny * d, z);
+
+  const N = Math.max(120, Math.ceil(Lmm / 20));
+  const samples: (At & { s: number })[] = [];
   for (let i = 0; i <= N; i++) {
     const smm = (i / N) * Lmm;
-    const p = at(i === N ? 0 : smm);
-    samples.push({ x: p.x, z: p.z, nx: p.nx, nz: p.nz, s: smm / 1000 });
+    samples.push({ ...at(i === N ? 0 : smm), s: smm / 1000 });
   }
-
-  /** Cinta que barre el segmento (dA,yA)–(dB,yB) a lo largo del lazo; d = desplazamiento hacia fuera. */
-  const ribbon = (dA: number, yA: number, dB: number, yB: number, m: THREE.Material, uScale = 0) => {
+  /** Cinta que barre el segmento (dA,zA)–(dB,zB) a lo largo del lazo; d = hacia fuera. */
+  const ribbon = (dA: number, zA: number, dB: number, zB: number, m: THREE.Material, uScale = 0) => {
     const pos: number[] = [];
     const uv: number[] = [];
     const idx: number[] = [];
     samples.forEach((p, i) => {
-      pos.push(p.x + p.nx * dA, yA, p.z + p.nz * dA, p.x + p.nx * dB, yB, p.z + p.nz * dB);
+      pos.push(p.x + p.nx * dA, p.y + p.ny * dA, zA, p.x + p.nx * dB, p.y + p.ny * dB, zB);
       const u = uScale ? p.s / uScale : 0;
       uv.push(u, 0, u, 1);
       if (i < samples.length - 1) {
@@ -216,79 +225,97 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
 
   const conveyor = new THREE.Group();
   scene.add(conveyor);
-  const railTop = H - 0.012;
-  const railBot = H - 0.1;
+  const P_IN = -0.095; // cara interior del perfil
+  const P_OUT = -0.013; // cara exterior del perfil (bajo la cadena)
   [-1, 1].forEach((sg) => {
     const c = (sg * w) / 2;
     const hw = 0.022;
-    // Perfil de aluminio con ranura en T.
-    conveyor.add(ribbon(c - hw, railTop, c + hw, railTop, alu));
-    conveyor.add(ribbon(c + hw, railBot, c + hw, railTop, alu));
-    conveyor.add(ribbon(c - hw, railBot, c - hw, railTop, alu));
-    conveyor.add(ribbon(c - hw, railBot, c + hw, railBot, aluDark));
-    const so = sg > 0 ? c + hw + 0.0005 : c - hw - 0.0005;
-    conveyor.add(ribbon(so, railBot + 0.03, so, railBot + 0.042, slot));
-    conveyor.add(ribbon(so, railBot + 0.058, so, railBot + 0.07, slot));
-    // Cadena sobre el perfil.
-    conveyor.add(ribbon(c - 0.012, H, c + 0.012, H, chainMat, PITCH));
-    conveyor.add(ribbon(c - 0.012, railTop, c - 0.012, H, darkSteel));
-    conveyor.add(ribbon(c + 0.012, railTop, c + 0.012, H, darkSteel));
-    // Guía lateral de plástico.
+    // Perfil de aluminio que sigue todo el lazo, con ranuras en T.
+    conveyor.add(ribbon(P_OUT, c - hw, P_OUT, c + hw, alu));
+    conveyor.add(ribbon(P_IN, c - hw, P_IN, c + hw, aluDark));
+    conveyor.add(ribbon(P_IN, c + hw, P_OUT, c + hw, alu));
+    conveyor.add(ribbon(P_IN, c - hw, P_OUT, c - hw, alu));
+    const so = c + sg * (hw + 0.0005);
+    conveyor.add(ribbon(-0.07, so, -0.06, so, slot));
+    conveyor.add(ribbon(-0.045, so, -0.035, so, slot));
+    // Cadena.
+    conveyor.add(ribbon(0, c - 0.012, 0, c + 0.012, chainMat, PITCH));
+    conveyor.add(ribbon(P_OUT, c - 0.012, 0, c - 0.012, darkSteel));
+    conveyor.add(ribbon(P_OUT, c + 0.012, 0, c + 0.012, darkSteel));
+    // Guía lateral de las paletas.
     const g = sg * (pw / 2 + 0.012);
-    conveyor.add(ribbon(g, H + 0.004, g, H + 0.03, guide));
-    conveyor.add(ribbon(sg * (pw / 2 + 0.012), H + 0.03, sg * (pw / 2 + 0.03), H + 0.03, guide));
-    conveyor.add(ribbon(sg * (pw / 2 + 0.03), railTop, sg * (pw / 2 + 0.03), H + 0.03, aluDark));
+    conveyor.add(ribbon(0.004, g, 0.034, g, guide));
+    conveyor.add(ribbon(0.034, g, 0.034, sg * (pw / 2 + 0.03), guide));
+    conveyor.add(ribbon(-0.004, sg * (pw / 2 + 0.012), 0.004, sg * (pw / 2 + 0.012), aluDark));
   });
 
-  // Patas, travesaños y pies.
-  const leg = (x: number, z: number) => {
-    const l = box(0.045, railBot, 0.045, alu);
-    l.position.set(x, railBot / 2, z);
-    const foot = box(0.11, 0.012, 0.11, darkSteel);
-    foot.position.set(x, 0.006, z);
-    conveyor.add(l, foot);
-  };
-  (['top', 'bottom'] as const).forEach((line) => {
-    const z = line === 'bottom' ? R : -R;
-    const n = Math.max(2, Math.ceil(S / 1.4) + 1);
-    for (let i = 0; i < n; i++) {
-      const x = -S / 2 + 0.12 + (i * (S - 0.24)) / (n - 1);
-      leg(x, z + w / 2);
-      leg(x, z - w / 2);
-      const cross = box(0.04, 0.04, w, aluDark);
-      cross.position.set(x, 0.22, z);
-      const top = box(0.04, 0.04, w, aluDark);
-      top.position.set(x, railBot - 0.02, z);
-      conveyor.add(cross, top);
-    }
-  });
+  // Separadores entre el perfil de arriba y el de abajo.
+  const nSep = Math.max(2, Math.ceil(S / 1.2) + 1);
+  for (let i = 0; i < nSep; i++) {
+    const x = -S / 2 + 0.1 + (i * (S - 0.2)) / (nSep - 1);
+    [-1, 1].forEach((sg) => {
+      const sp = box(0.04, 2 * R + 2 * P_IN, 0.04, aluDark);
+      sp.position.set(x, HC, (sg * w) / 2);
+      conveyor.add(sp);
+    });
+  }
 
-  // Módulos de curva: rueda dentada (gira con la cadena) y tapa.
+  // Ruedas dentadas y ejes en las dos curvas; protección naranja en el extremo.
   const wheels: THREE.Object3D[] = [];
-  [-S / 2, S / 2].forEach((x) => {
-    const wheel = new THREE.Group();
-    wheel.userData.dyn = true;
-    const disc = cyl(R + w / 2 + 0.015, 0.018, darkSteel, 64);
-    wheel.add(disc);
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      const mark = box(0.05, 0.022, 0.018, steel);
-      mark.position.set(Math.cos(a) * R, 0.002, Math.sin(a) * R);
-      mark.rotation.y = -a;
-      wheel.add(mark);
-    }
-    wheel.position.set(x, railBot - 0.035, 0);
-    wheels.push(wheel);
-    conveyor.add(wheel);
-    const cover = cyl(Math.max(0.05, R - w / 2 - 0.03), 0.012, alu, 64);
-    cover.position.set(x, railTop - 0.004, 0);
-    const column = box(0.08, railBot - 0.04, 0.08, alu);
-    column.position.set(x, (railBot - 0.04) / 2, 0);
-    conveyor.add(cover, column);
+  [-S / 2, S / 2].forEach((ex, end) => {
+    const shaft = cyl(0.025, pw + 0.4, steel, 16);
+    shaft.rotation.x = Math.PI / 2;
+    shaft.position.set(ex, HC, 0);
+    conveyor.add(shaft);
+    [-1, 1].forEach((sg) => {
+      const wheel = new THREE.Group();
+      wheel.userData.dyn = true;
+      const disc = cyl(R + P_OUT, 0.02, darkSteel, 64);
+      disc.rotation.x = Math.PI / 2;
+      wheel.add(disc);
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        const spoke = box(R * 1.6, 0.03, 0.024, steel);
+        spoke.rotation.z = a;
+        if (i < 5) wheel.add(spoke);
+      }
+      wheel.position.set(ex, HC, (sg * w) / 2);
+      wheels.push(wheel);
+      conveyor.add(wheel);
+      const bearing = box(0.09, 0.12, 0.05, cylDark);
+      bearing.position.set(ex, HC, sg * (pw / 2 + 0.07));
+      conveyor.add(bearing);
+    });
+    // Protección del extremo: chapa curvada por fuera de las paletas.
+    const outR = R + 0.16;
+    const th = new THREE.CylinderGeometry(outR, outR, pw + 0.12, 40, 1, true, end ? 0 : Math.PI, Math.PI);
+    const cover = new THREE.Mesh(th, guard);
+    guard.side = THREE.DoubleSide;
+    cover.castShadow = false;
+    cover.rotation.x = Math.PI / 2;
+    cover.position.set(ex, HC, 0);
+    conveyor.add(cover);
   });
+
+  // Estructura: columnas a los lados (las paletas pasan entre ellas) y travesaños.
+  const colZ = pw / 2 + 0.16;
+  const nCol = Math.max(2, Math.ceil(S / 2) + 1);
+  for (let i = 0; i < nCol; i++) {
+    const x = -S / 2 + 0.3 + (i * (S - 0.6)) / (nCol - 1);
+    [-1, 1].forEach((sg) => {
+      const col = box(0.08, HC + 0.04, 0.08, alu);
+      col.position.set(x, (HC + 0.04) / 2, sg * colZ);
+      const foot = box(0.18, 0.015, 0.18, darkSteel);
+      foot.position.set(x, 0.0075, sg * colZ);
+      conveyor.add(col, foot);
+    });
+    const cross = box(0.06, 0.06, 2 * colZ + 0.08, aluDark);
+    cross.position.set(x, HC, 0);
+    conveyor.add(cross);
+  }
 
   // ---- Suelo ---------------------------------------------------------------
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(span + 30, 2 * R + 30), floorMat);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(span + 30, 40), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
@@ -297,9 +324,8 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   (grid.material as THREE.Material).transparent = true;
   (grid.material as THREE.Material).opacity = 0.5;
   scene.add(grid);
-  // Línea amarilla de zona de seguridad.
-  const mx = span / 2 + 0.6;
-  const mz = R + w / 2 + 0.9;
+  const mx = span / 2 + 0.8;
+  const mz = colZ + (aerial ? 1.4 : 0.9);
   [
     [0, mz, 2 * mx, 0.06],
     [0, -mz, 2 * mx, 0.06],
@@ -313,54 +339,50 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   });
 
   // ---- Etiquetas -------------------------------------------------------------
-  const tag = (html: string, cls: string, parent: THREE.Object3D, x: number, y: number, z: number) => {
+  const tag = (html: string, cls: string, parent: THREE.Object3D, pos: THREE.Vector3) => {
     const div = document.createElement('div');
     div.className = `tag3d ${cls}`;
     div.innerHTML = html;
     const o = new CSS2DObject(div);
-    o.position.set(x, y, z);
+    o.position.copy(pos);
     parent.add(o);
     return div;
   };
   const named = (name: string, sub?: string) =>
     `<i class="tag3d__dot"></i><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}`;
 
-  // ---- Motor -----------------------------------------------------------------
+  // ---- Motor (en la curva donde suben las paletas) -----------------------------
   let motorTag: HTMLElement | null = null;
   const fan: THREE.Object3D[] = [];
   {
+    const ex = mEnd === 'right' ? S / 2 : -S / 2;
     const g = new THREE.Group();
-    const gear = box(0.2, 0.2, 0.2, motorBlue);
-    gear.position.set(0, 0, 0);
-    const motor = cyl(0.075, 0.3, motorBlue);
+    g.position.set(ex, HC, pw / 2 + 0.24);
+    const gear = box(0.22, 0.24, 0.16, motorBlue);
+    const motor = cyl(0.08, 0.32, motorBlue);
     motor.rotation.z = Math.PI / 2;
-    motor.position.set(0, -0.02, 0);
-    motor.position.z = 0;
-    motor.position.x = 0;
-    const mg = new THREE.Group();
-    mg.add(motor);
-    mg.position.set(0, 0, 0.25);
-    mg.rotation.y = Math.PI / 2;
+    motor.position.set((mEnd === 'right' ? -1 : 1) * 0.27, -0.03, 0);
     const finCount = 10;
     for (let i = 0; i < finCount; i++) {
-      const fin = box(0.28, 0.008, 0.02, motorBlue);
+      const fin = box(0.3, 0.008, 0.02, motorBlue);
       const a = (i / finCount) * Math.PI * 2;
-      fin.position.set(0, -0.02 + Math.sin(a) * 0.075, Math.cos(a) * 0.075);
-      mg.add(fin);
+      fin.position.set(motor.position.x, -0.03 + Math.sin(a) * 0.08, Math.cos(a) * 0.08);
+      g.add(fin);
     }
-    const fanCover = cyl(0.08, 0.05, black);
+    const fanCover = cyl(0.085, 0.05, black);
     fanCover.rotation.z = Math.PI / 2;
-    fanCover.position.set(0.17, -0.02, 0);
-    mg.add(fanCover);
+    fanCover.position.set((mEnd === 'right' ? -1 : 1) * 0.45, -0.03, 0);
     fanCover.userData.dyn = true;
     fan.push(fanCover);
-    const shaft = cyl(0.03, 0.12, steel);
-    shaft.position.set(0, 0.14, 0);
-    g.add(gear, mg, shaft);
-    g.position.set(S / 2, railBot - 0.24, 0);
+    g.add(gear, motor, fanCover);
     conveyor.add(g);
     if (layout.motor) {
-      motorTag = tag(named(layout.motor, desc.get(layout.motor)?.description || 'Motor'), 'tag3d--motor', g, 0, -0.25, 0.3);
+      motorTag = tag(
+        named(layout.motor, 'En marcha'),
+        'tag3d--motor',
+        g,
+        new THREE.Vector3(0, aerial ? -0.35 : 0.35, 0.1),
+      );
     }
   }
 
@@ -379,25 +401,23 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const stops: StopObj[] = [];
   const sensorObjs: { signal: string; led: THREE.Mesh; color: number; label: HTMLElement }[] = [];
 
-  /** Sensor inductivo M18 en escuadra sobre el perfil exterior, mirando a la paleta. */
+  /** Sensor inductivo M18 en escuadra sobre la guía delantera, mirando a la paleta. */
   const addSensor = (smm: number, signal: string, color: number, sub: string, small = false) => {
     const p = at(smm);
-    const g = new THREE.Group();
-    g.position.set(p.x, 0, p.z);
-    g.rotation.y = Math.atan2(-p.nz, p.nx); // local +X = hacia fuera
-    const bracket = box(0.05, 0.005, 0.03, steel);
-    bracket.position.set(pw / 2 + 0.05, H + 0.012, 0);
+    const z0 = pw / 2 + 0.035;
+    const c = world(p, 0.022, z0 + 0.035);
     const body = cyl(0.009, 0.07, steel, 16);
-    body.rotation.z = Math.PI / 2;
-    body.position.set(pw / 2 + 0.065, H + 0.022, 0);
+    body.rotation.x = Math.PI / 2;
+    body.position.copy(c);
     const face = cyl(0.0085, 0.006, black, 16);
-    face.rotation.z = Math.PI / 2;
-    face.position.set(pw / 2 + 0.028, H + 0.022, 0);
+    face.rotation.x = Math.PI / 2;
+    face.position.copy(world(p, 0.022, z0 - 0.002));
     const l = led(0.006);
-    l.position.set(pw / 2 + 0.102, H + 0.022, 0);
-    g.add(bracket, body, face, l);
-    conveyor.add(g);
-    const label = tag(named(signal, sub), small ? 'tag3d--small' : 'tag3d--sensor', g, pw / 2 + 0.12, H + (small ? 0.06 : 0.1), 0);
+    l.position.copy(world(p, 0.022, z0 + 0.073));
+    const bracket = box(0.03, 0.03, 0.005, steel);
+    bracket.position.copy(world(p, 0.022, z0 + 0.03));
+    conveyor.add(body, face, l, bracket);
+    const label = tag(named(signal, sub), small ? 'tag3d--small' : 'tag3d--sensor', conveyor, world(p, small ? 0.08 : 0.16, z0 + 0.1));
     sensorObjs.push({ signal, led: l, color, label });
   };
 
@@ -405,39 +425,30 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     const smm = stopS(layout, t);
     const p = at(smm);
     const g = new THREE.Group();
-    g.position.set(p.x, 0, p.z);
-    g.rotation.y = -p.h;
-    // Travesaño de montaje, cuerpo neumático, vástago y cabeza.
+    orient(g, p);
+    // Montaje entre los perfiles (dentro del lazo); la cabeza sale hacia fuera.
     const cross = box(0.05, 0.03, w + 0.04, aluDark);
-    cross.position.set(0.03, railBot - 0.015, 0);
+    cross.position.set(0.03, P_IN - 0.015, 0);
     const body = box(0.075, 0.15, 0.075, cylDark);
-    body.position.set(0.03, railBot - 0.105, 0);
+    body.position.set(0.03, P_IN - 0.105, 0);
     const cap = box(0.08, 0.02, 0.08, alu);
-    cap.position.set(0.03, railBot - 0.19, 0);
-    const rod = cyl(0.008, 0.16, steel, 12);
-    rod.position.set(0.03, railBot + 0.05, 0);
-    const headMat = mat({ color: 0xc62828, metalness: 0.2, roughness: 0.5, emissive: 0x000000 });
+    cap.position.set(0.03, P_IN - 0.19, 0);
+    const rod = cyl(0.008, 0.14, steel, 12);
+    rod.position.set(0.03, P_IN + 0.04, 0);
+    const headMat = mat({ color: 0xc62828, metalness: 0.2, roughness: 0.5 });
     const head = box(0.035, 0.06, w * 0.5, headMat);
     head.userData.dyn = true;
-    head.position.set(0.02, H + 0.005, 0);
+    head.position.set(0.02, 0.005, 0);
     const lamp = led(0.009);
-    lamp.position.set(0.03, railBot - 0.06, 0.042);
+    lamp.position.set(0.03, P_IN - 0.06, 0.042);
     const ledA = led(0.005);
-    ledA.position.set(0.069, railBot - 0.05, 0.02);
+    ledA.position.set(0.069, P_IN - 0.05, 0.02);
     const ledR = led(0.005);
-    ledR.position.set(0.069, railBot - 0.15, 0.02);
-    const senA = cyl(0.005, 0.03, steel, 10);
-    senA.rotation.z = Math.PI / 2;
-    senA.position.set(0.075, railBot - 0.05, 0);
-    const senR = senA.clone();
-    senR.position.y = railBot - 0.15;
-    g.add(cross, body, cap, rod, head, lamp, ledA, ledR, senA, senR);
+    ledR.position.set(0.069, P_IN - 0.15, 0.02);
+    g.add(cross, body, cap, rod, head, lamp, ledA, ledR);
     conveyor.add(g);
     const sig = desc.get(t.cylinder);
-    const out = Math.atan2(-p.nz, p.nx) + p.h; // ángulo local hacia fuera
-    const lx = Math.cos(out) * (pw / 2 + 0.28);
-    const lz = -Math.sin(out) * (pw / 2 + 0.28);
-    const label = tag(named(t.cylinder, 'tope cerrado'), 'tag3d--stop', g, lx, H + 0.2, lz);
+    const label = tag(named(t.cylinder, 'tope cerrado'), 'tag3d--stop', conveyor, world(p, 0.32, pw / 2 + 0.2));
     label.title = sig?.description ?? '';
     stops.push({
       cylinder: t.cylinder,
@@ -460,6 +471,19 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     addSensor(smm, x.signal, x.role === 'acumulacion' ? 0xff7a00 : 0x22d36b, role);
   });
 
+  // ---- Estaciones (solo su estado, en el lado donde se trabaja) -----------------
+  const stationTags: { stop: string; tag: HTMLElement; signals: string }[] = [];
+  layout.stations.forEach((st) => {
+    const t = layout.stops.find((x) => x.cylinder === st.stop);
+    if (!t) return;
+    const p = at(stopS(layout, t) - layout.palletLength / 2);
+    stationTags.push({
+      stop: st.stop,
+      tag: tag(named(st.label, 'Esperando paleta'), 'tag3d--station', conveyor, world(p, 0.5, 0)),
+      signals: [st.release, ...st.okSensors].filter(Boolean).join(' · '),
+    });
+  });
+
   // ---- Paletas -----------------------------------------------------------------
   interface PalletObj {
     g: THREE.Group;
@@ -470,59 +494,43 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   scene.add(palletRoot);
   const makePallet = (id: number): PalletObj => {
     const g = new THREE.Group();
+    // Y local = hacia fuera de la cadena: arriba va de pie, abajo cuelga.
     const plate = box(plen * 0.97, 0.022, pw, steel);
-    plate.position.y = H + 0.011;
+    plate.position.y = 0.011;
     const strip = box(plen * 0.97, 0.008, pw * 0.92, darkSteel);
-    strip.position.y = H + 0.026;
+    strip.position.y = 0.026;
     const fixture = box(plen * 0.42, 0.035, pw * 0.5, fixtureBlue);
-    fixture.position.y = H + 0.047;
+    fixture.position.y = 0.047;
     const pinA = cyl(0.007, 0.03, steel, 10);
-    pinA.position.set(plen * 0.3, H + 0.045, pw * 0.3);
+    pinA.position.set(plen * 0.3, 0.045, pw * 0.3);
     const pinB = pinA.clone();
-    pinB.position.set(-plen * 0.3, H + 0.045, -pw * 0.3);
-    const bush = cyl(0.016, 0.004, black, 16);
-    bush.position.set(plen * 0.3, H + 0.031, pw * 0.3);
-    const bush2 = bush.clone();
-    bush2.position.set(-plen * 0.3, H + 0.031, -pw * 0.3);
-    // Flecha en el utillaje: se ve que la paleta gira bien en las curvas.
-    const arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(Math.min(plen, pw) * 0.12, Math.min(plen, pw) * 0.25, 3),
-      mat({ color: 0xf2c200, roughness: 0.5 }),
-    );
+    pinB.position.set(-plen * 0.3, 0.045, -pw * 0.3);
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(Math.min(plen, pw) * 0.12, Math.min(plen, pw) * 0.25, 3), arrowMat);
     arrow.rotation.z = -Math.PI / 2;
     arrow.scale.set(1, 1, 0.25);
-    arrow.position.set(0, H + 0.068, 0);
-    g.add(plate, strip, fixture, pinA, pinB, bush, bush2, arrow);
+    arrow.position.set(0, 0.068, 0);
+    g.add(plate, strip, fixture, pinA, pinB, arrow);
     mergeStatic(g);
     palletRoot.add(g);
-    const label = tag(`<b>P${id}</b>`, 'tag3d--pallet', g, 0, H + 0.2, 0);
+    const label = tag(`<b>P${id}</b>`, 'tag3d--pallet', g, new THREE.Vector3(0, 0.16, 0));
     return { g, label };
   };
-
-  // ---- Estaciones (solo estado en su tope) -----------------------------------
-  const stationTags: { stop: string; tag: HTMLElement; signals: string }[] = [];
-  layout.stations.forEach((st) => {
-    const t = layout.stops.find((x) => x.cylinder === st.stop);
-    if (!t) return;
-    const p = at(stopS(layout, t) - layout.palletLength / 2);
-    const g = new THREE.Group();
-    g.position.set(p.x + p.nx * (pw / 2 + 0.5), 0, p.z + p.nz * (pw / 2 + 0.5));
-    conveyor.add(g);
-    stationTags.push({
-      stop: st.stop,
-      tag: tag(named(st.label, 'Esperando paleta'), 'tag3d--station', g, 0, H + 0.12, 0),
-      signals: [st.release, ...st.okSensors].filter(Boolean).join(' · '),
-    });
-  });
 
   // ---- Cámara ------------------------------------------------------------------
   const setCamera = (preset: CameraPreset) => {
     const aspect = Math.max(1, camera.aspect || 1.8);
-    const d = Math.max(3.2, (span * 1.12) / (2 * Math.tan(THREE.MathUtils.degToRad(17.5)) * aspect) + 0.6);
-    if (preset === 'planta') camera.position.set(0, d * 1.05, 0.01);
-    else if (preset === 'frontal') camera.position.set(0, 1.9, d + R);
-    else camera.position.set(-span * 0.1, d * 0.62, d * 0.8);
-    controls.target.set(0, preset === 'planta' ? 0 : 0.55, preset === 'general' ? 0.15 : 0);
+    const d = Math.max(3, (span * 1.1) / (2 * Math.tan(THREE.MathUtils.degToRad(17.5)) * aspect) + 0.8);
+    if (preset === 'lateral') {
+      camera.position.set(0, HC, d);
+      controls.target.set(0, HC, 0);
+    } else if (preset === 'superior') {
+      camera.position.set(-span * 0.08, HC + d * 0.75, d * 0.55);
+      controls.target.set(0, HC, 0);
+    } else {
+      // A la altura de una persona: el aéreo se ve desde abajo, el de suelo desde arriba.
+      camera.position.set(-span * 0.12, aerial ? 1.6 : HC + 1.6, d * 0.95);
+      controls.target.set(0, aerial ? HC - 0.2 : HC - 0.1, 0);
+    }
     controls.update();
   };
   setCamera('general');
@@ -530,6 +538,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   if (soft) lighten();
 
   // ---- Tamaño ------------------------------------------------------------------
+  let fitted = false;
   const resize = () => {
     const wpx = el.clientWidth || 800;
     const hpx = el.clientHeight || 520;
@@ -544,16 +553,20 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
       setCamera('general');
     }
   };
-  let fitted = false;
   const ro = new ResizeObserver(resize);
   ro.observe(el);
 
   // ---- Actualización -----------------------------------------------------------
   let lastTime = -1;
   let travel = 0;
+  let lastFrame = 0;
+  let ema = 0;
+  let slowFrames = 0;
+  let skip = 0;
+  let frameNo = 0;
+  const dirSign = layout.direction === 'cw' ? -1 : 1;
   const update = (plant: Plant) => {
-    if (!el.isConnected) return;
-    if (!el.clientWidth) return;
+    if (!el.isConnected || !el.clientWidth) return;
     if (renderer.domElement.width === 0) resize();
     const dt = lastTime < 0 ? 0 : Math.max(0, plant.time - lastTime);
     lastTime = plant.time;
@@ -568,17 +581,18 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
       if (++slowFrames > 30) degrade();
     } else slowFrames = 0;
     if (skip && frameNo++ % (skip + 1) !== 0) return;
+
     chainTex.offset.x = -((travel / 1000 / PITCH) % 1);
-    const dir = layout.direction === 'cw' ? 1 : -1;
-    wheels.forEach((wh) => (wh.rotation.y = dir * ((travel / 1000) / R)));
+    wheels.forEach((wh) => (wh.rotation.z = (dirSign * (travel / 1000)) / R));
     fan.forEach((f) => (f.rotation.x = travel / 30));
     if (motorTag) {
       motorTag.classList.toggle('is-on', motor);
       motorTag.classList.toggle('is-bad', !motor);
-      motorTag.querySelector('small')!.textContent = motor ? 'En marcha' : 'Parado';
+      const small = motorTag.querySelector('small')!;
+      const txt = motor ? 'En marcha' : 'Parado';
+      if (small.textContent !== txt) small.textContent = txt;
     }
 
-    // Estaciones.
     stationTags.forEach((r) => {
       const sp = plant.stationProgress(r.stop);
       const state = !sp ? 'Esperando paleta' : sp.progress >= 1 ? `Terminado${r.signals ? ` · ${r.signals}` : ''}` : `Trabajando ${Math.round(sp.progress * 100)} %`;
@@ -588,7 +602,6 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
       r.tag.classList.toggle('is-done', !!sp && sp.progress >= 1);
     });
 
-    // Paletas.
     const alive = new Set<number>();
     plant.pallets.forEach((p) => {
       alive.add(p.id);
@@ -597,28 +610,29 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
         o = makePallet(p.id);
         pallets.set(p.id, o);
       }
-      const c = at(p.front - layout.palletLength / 2);
-      o.g.position.set(c.x, 0, c.z);
-      o.g.rotation.y = -c.h;
+      orient(o.g, at(p.front - layout.palletLength / 2));
       o.label.classList.toggle('is-stopped', !p.moving);
     });
     pallets.forEach((o, id) => {
       if (alive.has(id)) return;
       palletRoot.remove(o.g);
-      o.g.traverse((n) => n instanceof THREE.Mesh && n.geometry.dispose());
-      o.g.traverse((n) => n instanceof CSS2DObject && n.element.remove());
+      o.g.traverse((n) => {
+        if (n instanceof CSS2DObject) n.element.remove();
+        if (n instanceof THREE.Mesh) n.geometry.dispose();
+      });
       pallets.delete(id);
     });
 
-    // Topes.
     stops.forEach((t) => {
       const pos = plant.cylinder.get(t.cylinder) ?? 0;
-      t.head.position.y = H + 0.005 - pos * 0.075;
+      // Cerrado: la cabeza sobresale de la cadena y frena la paleta.
+      t.head.position.y = 0.005 - pos * 0.075;
       const col = pos >= 1 ? 0x2bd46a : pos <= 0 ? 0xff3b30 : 0xffb000;
       setLed(t.lamp, col);
       const hm = t.head.material as THREE.MeshStandardMaterial;
-      if (hm.color.getHex() !== (pos >= 1 ? 0x2e9d55 : pos <= 0 ? 0xc62828 : 0xe0a100)) {
-        hm.color.setHex(pos >= 1 ? 0x2e9d55 : pos <= 0 ? 0xc62828 : 0xe0a100);
+      const hc = pos >= 1 ? 0x2e9d55 : pos <= 0 ? 0xc62828 : 0xe0a100;
+      if (hm.color.getHex() !== hc) {
+        hm.color.setHex(hc);
         hm.emissive.setHex(col);
         hm.emissiveIntensity = 0.25;
       }
@@ -641,11 +655,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
   };
-  let lastFrame = 0;
-  let ema = 0;
-  let slowFrames = 0;
-  let skip = 0;
-  let frameNo = 0;
+
   let quality = soft ? 3 : 6;
   /** Baja la calidad paso a paso: sombras, reflejos, resolución y fotogramas. */
   const degrade = () => {

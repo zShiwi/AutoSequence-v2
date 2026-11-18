@@ -118,3 +118,21 @@ describe('Paletas en marcha', () => {
     expect(plant.pallets.length).toBe(7 + added - 1);
   });
 });
+
+describe('Tipo de transportador', () => {
+  it('aéreo: pre-carga arriba y el resto abajo; motor en la curva donde suben las paletas', async () => {
+    const { defaultLayout, liftEnd, motorEnd } = await import('../src/plant/layout');
+    const a = defaultLayout(signals, 'aereo');
+    expect(a.kind).toBe('aereo');
+    expect(a.stops[0].line).toBe('top');
+    expect(a.stops.slice(1).every((s) => s.line === 'bottom')).toBe(true);
+    const s = defaultLayout(signals, 'suelo');
+    expect(s.stops[0].line).toBe('bottom');
+    expect(s.stops.slice(1).every((t) => t.line === 'top')).toBe(true);
+    // ccw: abajo avanza a la derecha → suben por la curva derecha.
+    expect(liftEnd({ direction: 'ccw' })).toBe('right');
+    expect(liftEnd({ direction: 'cw' })).toBe('left');
+    expect(motorEnd({ ...a, motorEnd: 'left' })).toBe('left');
+    expect(acu4Layout().kind).toBe('aereo');
+  });
+});
