@@ -291,7 +291,18 @@ export function renderPlant(app: App): HTMLElement {
     const prod = root.querySelector('[data-slot="prod"]');
     if (prod) {
       const cyc = plant.stationCycles();
-      prod.innerHTML = `<dl class="plant-stats">
+      const waits = plant.waitingStops();
+      const blocked = plant.blockedFor();
+      const why = waits
+        .map((w) => `<li><code>${esc(w.cylinder)}</code> no abre: falta ${w.missing.map((m) => `<code>${esc(m)}</code>${desc.get(m.split(' ')[0]) ? ` <span class="muted">(${esc(desc.get(m.split(' ')[0])!)})</span>` : ''}`).join(', ')}</li>`)
+        .join('');
+      prod.innerHTML = `${
+        blocked > 5
+          ? `<div class="callout callout--warn plant-block">${icon('alert', 18)}<div><p><strong>Transportador bloqueado:</strong> ninguna paleta se mueve desde hace ${Math.round(blocked)} s.</p>${why ? `<ul>${why}</ul>` : ''}</div></div>`
+          : why
+            ? `<div class="plant-why"><p class="plant-why__title">Por qué no abren los topes con paleta</p><ul>${why}</ul></div>`
+            : ''
+      }<dl class="plant-stats">
         <div><dt>Motor</dt><dd class="${plant.motorOn() ? 'ok' : 'bad'}">${plant.motorOn() ? 'En marcha' : 'Parado'}</dd></div>
         <div><dt>Paletas en el lazo</dt><dd>${plant.pallets.length} de ${plant.capacity()} posibles${plant.pending ? ` · ${plant.pending} esperando entrar` : ''}</dd></div>
         <div><dt>Paletas paradas</dt><dd>${plant.pallets.filter((x) => !x.moving).length}</dd></div>

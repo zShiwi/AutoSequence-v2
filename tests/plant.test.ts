@@ -32,7 +32,7 @@ describe('Geometría del transportador', () => {
   it('un sensor colocado «antes» de un tope queda aguas arriba', () => {
     const px04 = sensorS(l, l.sensors.find((s) => s.signal === 'PX04')!)!;
     const c03 = sOnLine(l, 'bottom', 4700);
-    expect(ahead(px04, c03, loopLength(l))).toBeCloseTo(1500);
+    expect(ahead(px04, c03, loopLength(l))).toBeCloseTo(3100);
   });
   it('el layout de la plantilla no tiene errores', () => {
     expect(validateLayout(l, signals).filter((i) => i.level === 'error')).toEqual([]);
@@ -165,6 +165,37 @@ describe('Paletas en marcha', () => {
       }
       expect(bad, `paletas=${n}`).toEqual([]);
     });
+  });
+});
+
+describe('Acumulación máxima', () => {
+  it('con cualquier número de paletas hasta el máximo, el ACU no se bloquea', () => {
+    [7, 10, 13, 17].forEach((n) => {
+      const plant = new Plant(acu4Layout(), signals, rules);
+      while (plant.pallets.length + plant.pending < n && plant.addPallet());
+      plant.step(300000);
+      const before = plant.stationCycles().map((c) => c.cycles);
+      plant.step(120000);
+      const done = plant.stationCycles().map((c, i) => c.cycles - before[i]);
+      expect(done.every((d) => d >= 5), `paletas=${n}: ciclos ${done}`).toBe(true);
+      expect(plant.blockedFor()).toBe(0);
+    });
+  });
+
+  it('avisa si el sensor está demasiado cerca y explica por qué no abre un tope', () => {
+    const l = acu4Layout();
+    expect(validateLayout(l, signals).some((i) => i.text.includes('acumulación máxima'))).toBe(false);
+    l.sensors.forEach((x) => x.role === 'acumulacion' && (x.offset = -1500));
+    const warn = validateLayout(l, signals).filter((i) => i.text.includes('acumulación máxima'));
+    expect(warn.map((w) => w.text.split(' ')[0]).sort()).toEqual(['PX04', 'PX08']);
+    // Con la colocación antigua, 12 paletas bloquean el lazo y se dice por qué.
+    const plant = new Plant(l, signals, rules);
+    while (plant.pallets.length + plant.pending < 12 && plant.addPallet());
+    plant.step(300000);
+    expect(plant.blockedFor()).toBeGreaterThan(30);
+    const why = Object.fromEntries(plant.waitingStops().map((w) => [w.cylinder, w.missing]));
+    expect(why.C04).toEqual(['PX08 = 0']);
+    expect(why.C02).toEqual(['PX04 = 0']);
   });
 });
 

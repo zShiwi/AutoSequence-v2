@@ -401,6 +401,14 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const stops: StopObj[] = [];
   const sensorObjs: { signal: string; led: THREE.Mesh; color: number; label: HTMLElement | null }[] = [];
 
+  // Etiquetas cercanas a distinta altura para que no se pisen.
+  const placedLabels: { x: number; y: number; d: number }[] = [];
+  const labelDepth = (x: number, y: number, base = 0.32) => {
+    let d = base;
+    while (placedLabels.some((q) => Math.abs(q.x - x) < 1.05 && Math.abs(q.y - y) < 0.2 && Math.abs(q.d - d) < 0.36)) d += 0.4;
+    placedLabels.push({ x, y, d });
+    return d;
+  };
   /** Sensor inductivo M18 en escuadra sobre la guía delantera, mirando a la paleta. */
   const addSensor = (smm: number, signal: string, color: number, sub: string | null) => {
     const p = at(smm);
@@ -418,18 +426,10 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     bracket.position.copy(world(p, 0.022, z0 + 0.03));
     conveyor.add(body, face, l, bracket);
     // La presencia del tope no lleva etiqueta propia: va en la del tope.
-    const label = sub === null ? null : tag(named(signal, sub), 'tag3d--sensor', conveyor, world(p, 0.16, z0 + 0.1));
+    const label = sub === null ? null : tag(named(signal, sub), 'tag3d--sensor', conveyor, world(p, labelDepth(p.x, p.y, 0.16), z0 + 0.1));
     sensorObjs.push({ signal, led: l, color, label });
   };
 
-  // Etiquetas de topes cercanos a distinta altura para que no se pisen.
-  const placedLabels: { x: number; y: number; d: number }[] = [];
-  const labelDepth = (x: number, y: number) => {
-    let d = 0.32;
-    while (placedLabels.some((q) => Math.abs(q.x - x) < 1.4 && Math.abs(q.y - y) < 0.2 && Math.abs(q.d - d) < 0.4)) d += 0.55;
-    placedLabels.push({ x, y, d });
-    return d;
-  };
   layout.stops.forEach((t) => {
     const smm = stopS(layout, t);
     const p = at(smm);
@@ -462,7 +462,8 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
         (t.presence ? `<small class="tag3d__pres" data-pres><i></i>${esc(t.presence)} · presencia</small>` : '') +
         (layout.stations.some((x) => x.stop === t.cylinder)
           ? `<small class="tag3d__station" data-station>${esc(layout.stations.find((x) => x.stop === t.cylinder)!.label)}: esperando</small>`
-          : ''),
+          : '') +
+        `<small class="tag3d__why" data-why hidden></small>`,
       'tag3d--stop',
       conveyor,
       world(p, labelDepth(p.x, p.y), pw / 2 + 0.2),
@@ -502,7 +503,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     orient(mark, p);
     mark.position.copy(world(p, 0.003, -(pw / 2 + 0.06)));
     conveyor.add(mark);
-    tag(named('Entrada de paletas', `cola de ${entry.stop}`), 'tag3d--entry', conveyor, world(p, 0.25, -(pw / 2 + 0.25)));
+    tag(named('Entrada de paletas', `cola de ${entry.stop}`), 'tag3d--entry', conveyor, world(p, labelDepth(p.x, p.y, 0.25), -(pw / 2 + 0.25)));
   }
 
   // ---- Paletas -----------------------------------------------------------------
@@ -644,8 +645,20 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
       pallets.delete(id);
     });
 
+    // Por qué no abre un tope que tiene paleta (sin contar lo que espera del robot mientras trabaja).
+    const waits = new Map(plant.waitingStops().map((w) => [w.cylinder, w.missing]));
     stops.forEach((t) => {
       const pos = plant.cylinder.get(t.cylinder) ?? 0;
+      const why = t.label.querySelector<HTMLElement>('[data-why]')!;
+      const st = layout.stations.find((x) => x.stop === t.cylinder);
+      const sp = st ? plant.stationProgress(t.cylinder) : null;
+      const own = st ? new Set([st.release, ...st.okSensors, ...st.nokSensors].filter(Boolean) as string[]) : new Set<string>();
+      const missing = (waits.get(t.cylinder) ?? []).filter((m) => !(sp && sp.progress < 1 && own.has(m.split(' ')[0])));
+      const whyTxt = missing.length ? `espera ${missing.join(', ')}` : '';
+      if (why.textContent !== whyTxt) {
+        why.textContent = whyTxt;
+        why.hidden = !whyTxt;
+      }
       // Cerrado: la cabeza sobresale de la cadena y frena la paleta.
       t.head.position.y = 0.005 - pos * 0.075;
       const col = pos >= 1 ? 0x2bd46a : pos <= 0 ? 0xff3b30 : 0xffb000;

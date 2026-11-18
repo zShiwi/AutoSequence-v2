@@ -2472,6 +2472,38 @@ select.input {
   stroke: #c99a00;
 }
 
+.tag3d__why {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--err) !important;
+  font-weight: 600 !important;
+}
+
+.plant-block,
+.plant-why {
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.plant-block p {
+  margin: 0;
+}
+
+.plant-block ul,
+.plant-why ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.plant-why__title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
 .tag3d--sensor.is-on {
   border-color: var(--t-in);
 }

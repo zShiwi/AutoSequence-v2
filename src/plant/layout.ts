@@ -178,6 +178,26 @@ export function validateLayout(l: ConveyorLayout, signals: Signal[]): LayoutIssu
     if (x.ref === 'left' && (x.offset < 0 || x.offset > l.length))
       issues.push({ level: 'warn', text: `El sensor ${x.signal} está fuera de la recta.` });
   });
+  // Acumulación máxima demasiado cerca de su tope: salta con pocas paletas en
+  // cola y las zonas pueden bloquearse entre sí. Debe ir al principio de la
+  // cola, justo después del sensor de paso del tope anterior.
+  const pitch = l.palletLength + l.palletGap;
+  const ordered = l.stops.map((t) => ({ c: t.cylinder, s: stopS(l, t) })).sort((a, b) => a.s - b.s);
+  l.sensors
+    .filter((x) => x.role === 'acumulacion' && x.ref !== 'left' && x.offset < 0)
+    .forEach((x) => {
+      const i = ordered.findIndex((t) => t.c === x.ref);
+      if (i < 0 || ordered.length < 2) return;
+      const prev = ordered[(i - 1 + ordered.length) % ordered.length];
+      const after = l.sensors.filter((y) => y.ref === prev.c && y.offset > 0).reduce((m, y) => Math.max(m, y.offset), 0);
+      const room = ahead(prev.s, ordered[i].s, L) - after;
+      const queue = Math.ceil(-x.offset / pitch);
+      if (-x.offset < room * 0.6)
+        issues.push({
+          level: 'warn',
+          text: `${x.signal} (acumulación máxima) está a ${-x.offset} mm de ${x.ref}: con ${queue} paletas en cola ya se activa y las zonas pueden bloquearse entre sí. Colócalo al principio de la cola, a unos ${Math.round((room - pitch) / 100) * 100} mm antes de ${x.ref}.`,
+        });
+    });
   l.stations.forEach((st) => {
     if (!l.stops.some((t) => t.cylinder === st.stop)) issues.push({ level: 'error', text: `La estación «${st.label}» está en un tope que no existe.` });
     need(st.release, `Estación «${st.label}»`);
@@ -271,9 +291,9 @@ export function acu4Layout(): ConveyorLayout {
     ],
     sensors: [
       { signal: 'PX03', role: 'paso', ref: 'C02', offset: 700 },
-      { signal: 'PX04', role: 'acumulacion', ref: 'C03', offset: -1500 },
+      { signal: 'PX04', role: 'acumulacion', ref: 'C03', offset: -3100 },
       { signal: 'PX07', role: 'paso', ref: 'C04', offset: 1600 },
-      { signal: 'PX08', role: 'acumulacion', ref: 'C01', offset: -1500 },
+      { signal: 'PX08', role: 'acumulacion', ref: 'C01', offset: -4500 },
     ],
     stations: [
       station('C02', 'Robot de carga', 'load', 'ROBOT_CARGA_OK', 'PPE01', 'PPE02'),

@@ -15,7 +15,8 @@
  *     reacciona con sus reglas.
  */
 
-import type { ConveyorLayout, Rule, Signal, SignalLevel } from '../types';
+import type { Condition, ConveyorLayout, Rule, Signal, SignalLevel } from '../types';
+import { conditionGroups } from '../plc/rules';
 import { Simulator } from '../plc/simulation';
 import { PRESENCE_BEFORE_STOP, ahead, loopLength, palletEntry, sensorS, stopS, wrap } from './layout';
 
@@ -77,8 +78,13 @@ export class Plant {
   private readonly stopPos: { cylinder: string; s: number; travelMs: number; active?: string; rest?: string }[];
   private readonly points: { signal: string; s: number }[];
 
+  private readonly rules: Rule[];
+  /** Tiempo (ms) desde el que ninguna paleta se mueve con el motor en marcha. */
+  private stillSince: number | null = null;
+
   constructor(layout: ConveyorLayout, signals: Signal[], rules: Rule[]) {
     this.layout = layout;
+    this.rules = rules;
     this.L = loopLength(layout);
     this.sim = new Simulator(signals, rules, { externalDerived: true });
     const bySignal = new Map(signals.map((s) => [s.name, s]));
@@ -261,6 +267,35 @@ export class Plant {
     return { pallet: st.pallet, progress: st.done ? 1 : Math.min(1, st.timer / Math.max(1, st.cycleMs)), action: st.action };
   }
 
+  /**
+   * Para cada tope con paleta esperando y cerrado: qué condiciones de su regla
+   * de apertura faltan (p. ej. «PX08 = 0»). Explica por qué no abre.
+   */
+  waitingStops(): { cylinder: string; missing: string[] }[] {
+    const st = this.sim.states;
+    const level = (c: Condition) =>
+      c.event === '==1' ? st[c.signal] === 1 : c.event === '==0' ? st[c.signal] === 0 : null; // flancos: no se pueden «esperar»
+    const text = (c: Condition) => `${c.signal} = ${c.event === '==0' ? 0 : 1}`;
+    return this.layout.stops
+      .filter((t) => t.presence && st[t.presence] === 1 && st[t.cylinder] !== 1)
+      .map((t) => {
+        const openers = this.rules.filter((r) => r.actions.some((a) => a.signal === t.cylinder && a.value === '1'));
+        const options = openers.map((r) =>
+          conditionGroups(r.conditions)
+            .filter((g) => !g.some((c) => level(c) !== false))
+            .map((g) => g.map(text).join(' o ')),
+        );
+        options.sort((a, b) => a.length - b.length);
+        return { cylinder: t.cylinder, missing: options[0] ?? [] };
+      })
+      .filter((x) => x.missing.length);
+  }
+
+  /** Segundos que lleva todo parado con el motor en marcha (bloqueo), o 0. */
+  blockedFor(): number {
+    return this.stillSince === null ? 0 : (this.time - this.stillSince) / 1000;
+  }
+
   motorOn(): boolean {
     return this.layout.motor ? this.sim.states[this.layout.motor] === 1 : true;
   }
@@ -277,6 +312,9 @@ export class Plant {
       this.runStations(h);
       this.feed();
       this.sync();
+      const still = this.motorOn() && this.pallets.length > 0 && this.pallets.every((p) => !p.moving);
+      if (!still) this.stillSince = null;
+      else if (this.stillSince === null) this.stillSince = this.time;
     }
   }
 
