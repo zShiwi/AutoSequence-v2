@@ -260,18 +260,19 @@ function resetHistory(): void {
 }
 
 /** Registra el estado anterior al cambio que se acaba de hacer. */
-function recordChange(p: Project): void {
+function recordChange(p: Project, separate = false): void {
   const snap = snapshot(p);
   const now = Date.now();
   if (baseline !== null && snap !== baseline) {
-    if (now - lastCommitAt > UNDO_GROUP_MS || !undoStack.length) {
+    if (separate || now - lastCommitAt > UNDO_GROUP_MS || !undoStack.length) {
       undoStack.push(baseline);
       if (undoStack.length > UNDO_MAX) undoStack.shift();
     }
     redoStack.length = 0;
   }
   baseline = snap;
-  lastCommitAt = now;
+  // Tras una acción de un clic, el siguiente cambio empieza otro paso.
+  lastCommitAt = separate ? 0 : now;
 }
 
 /** Sustituye el contenido del proyecto abierto manteniendo el mismo objeto. */
@@ -322,12 +323,17 @@ export function closeProject(): void {
 let saveTimer: number | undefined;
 
 /** Notifica un cambio del proyecto activo y programa el autoguardado. */
-export function commit(): void {
+/**
+ * Registra un cambio del proyecto abierto. Los cambios seguidos (escribir en
+ * un campo) se agrupan en un solo paso de deshacer; con `separate` el cambio
+ * es siempre un paso propio (acciones de un clic, como crear un tope).
+ */
+export function commit(opts: { separate?: boolean } = {}): void {
   const p = session.project;
   if (!p) return;
   p.updatedAt = Date.now();
   p.rules = p.blocks.flatMap((b) => b.rules);
-  recordChange(p);
+  recordChange(p, opts.separate);
   session.saveStatus = 'pending';
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(flushSave, SAVE_DELAY);
@@ -407,9 +413,36 @@ export function signalUsage(name: string): { block: string; rule: string }[] {
   return out;
 }
 
-/** Renombra una señal en todas las reglas que la usan. */
+/**
+ * Renombra una señal en todas las reglas que la usan (devuelve cuántas
+ * referencias de reglas cambian). También actualiza los enlaces que no son
+ * reglas: la presencia de los topes y el transportador.
+ */
 export function renameSignalRefs(oldName: string, newName: string): number {
   if (!session.project || !oldName || oldName === newName) return 0;
+  const p = session.project;
+  p.signals.forEach((s) => {
+    if (s.presence === oldName) s.presence = newName;
+  });
+  if (p.layout) {
+    const l = p.layout;
+    const sw = (v: string | undefined) => (v === oldName ? newName : v);
+    if (l.motor === oldName) l.motor = newName;
+    l.stops.forEach((t) => {
+      t.cylinder = sw(t.cylinder)!;
+      if (t.presence) t.presence = sw(t.presence);
+    });
+    l.sensors.forEach((x) => {
+      x.signal = sw(x.signal)!;
+      x.ref = sw(x.ref)!;
+    });
+    l.stations.forEach((st) => {
+      st.stop = sw(st.stop)!;
+      if (st.release) st.release = sw(st.release);
+      st.okSensors = st.okSensors.map((v) => sw(v)!);
+      st.nokSensors = st.nokSensors.map((v) => sw(v)!);
+    });
+  }
   let n = 0;
   session.project.blocks.forEach((b) =>
     b.rules.forEach((r) => {

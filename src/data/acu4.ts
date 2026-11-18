@@ -24,13 +24,14 @@ const on = (s: string) => c(s, '==1');
 const off = (s: string) => c(s, '==0');
 const up = (s: string) => c(s, 'Flanco ascendente');
 
-const cyl = (name: string, description: string): Signal => ({
+const cyl = (name: string, description: string, presence: string): Signal => ({
   name,
   type: 'Cilindro',
   initial: 0,
   description,
   inductivoActivo: `${name}PX2`,
   inductivoReposo: `${name}PX1`,
+  presence,
 });
 const sensor = (name: string, description: string, initial: 0 | 1 = 0): Signal => ({
   name,
@@ -54,25 +55,25 @@ export function acu4Signals(): Signal[] {
     mark('AL_LONG_CADENA', 'Alarma longitud de cadena (mantenimiento)'),
     // Zona de carga
     sensor('PX01', 'Paleta en tope de pre-carga'),
-    cyl('C01', 'Tope de pre-carga · DSBC-40-50-PPSA-N3'),
+    cyl('C01', 'Tope de pre-carga · DSBC-40-50-PPSA-N3', 'PX01'),
     mark('SM_C01', 'Tránsito pre-carga (C01 → paso paleta)'),
     sensor('PX02', 'Paleta en tope de carga'),
     sensor('PPE01', 'Control de pieza carga 1 (debe detectar)'),
     sensor('PPE02', 'Control de pieza carga 2 (no debe detectar)'),
     sensor('ROBOT_CARGA_OK', 'Robot: liberación de zona de carga'),
-    cyl('C02', 'Tope de carga · DSBC-40-50-PPSA-N3'),
+    cyl('C02', 'Tope de carga · DSBC-40-50-PPSA-N3', 'PX02'),
     mark('SM_C02', 'Tránsito carga (C02 → paso paleta)'),
     sensor('PX03', 'Paleta fuera de interferencia (carga)'),
     sensor('PX04', 'Máxima acumulación antes de pre-descarga'),
     // Zona de descarga
     sensor('PX05', 'Paleta en tope de pre-descarga'),
-    cyl('C03', 'Tope de pre-descarga · DSBC-40-50-PPSA-N3'),
+    cyl('C03', 'Tope de pre-descarga · DSBC-40-50-PPSA-N3', 'PX05'),
     mark('SM_C03', 'Tránsito pre-descarga (C03 → paso paleta)'),
     sensor('PX06', 'Paleta en tope de descarga'),
     sensor('PPE21', 'Control de pieza descarga 1 (debe detectar)'),
     sensor('PPE22', 'Control de pieza descarga 2 (no debe detectar)'),
     sensor('ROBOT_DESCARGA_OK', 'Robot: liberación de zona de descarga'),
-    cyl('C04', 'Tope de descarga · DSBC-40-50-PPSA-N3'),
+    cyl('C04', 'Tope de descarga · DSBC-40-50-PPSA-N3', 'PX06'),
     mark('SM_C04', 'Tránsito descarga (C04 → paso paleta)'),
     sensor('PX07', 'Paleta fuera de interferencia (descarga)'),
     sensor('PX08', 'Máxima acumulación antes de pre-carga'),
