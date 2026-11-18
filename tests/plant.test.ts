@@ -96,3 +96,25 @@ describe('Planta ACU 4 topes + PLC', () => {
     expect(plant.manualInputs()).not.toContain('PX01');
   });
 });
+
+describe('Paletas en marcha', () => {
+  it('se añaden en el hueco más grande sin solaparse y se quitan', () => {
+    const plant = new Plant(acu4Layout(), signals, rules);
+    plant.step(20000);
+    const cap = plant.capacity();
+    expect(cap).toBe(Math.floor(plant.L / (400 + 20)));
+    let added = 0;
+    while (plant.addPallet()) added++;
+    expect(plant.pallets.length).toBeGreaterThan(20);
+    expect(plant.pallets.length).toBeLessThanOrEqual(cap);
+    const sorted = [...plant.pallets].sort((a, b) => a.front - b.front);
+    sorted.forEach((p, i) => {
+      const next = sorted[(i + 1) % sorted.length];
+      expect(ahead(p.front, next.front, plant.L) - 400).toBeGreaterThanOrEqual(20 - 1e-6);
+    });
+    plant.step(60000);
+    expect(plant.sim.warnings).toEqual([]);
+    expect(plant.removePallet()).toBe(true);
+    expect(plant.pallets.length).toBe(7 + added - 1);
+  });
+});

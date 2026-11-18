@@ -132,6 +132,55 @@ export class Plant {
     this.record(this.sim.apply([{ signal, value }], 'Manual'));
   }
 
+  /** Paletas que caben en el lazo como mucho. */
+  capacity(): number {
+    return Math.floor(this.L / (this.layout.palletLength + this.layout.palletGap));
+  }
+
+  /**
+   * Añade una paleta en el hueco libre más grande, sin parar la simulación.
+   * Devuelve false si no cabe.
+   */
+  addPallet(): boolean {
+    const { palletLength: len, palletGap: gap } = this.layout;
+    const id = this.pallets.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+    if (!this.pallets.length) {
+      this.pallets.push({ id, front: wrap(len + 150, this.L), part: false, moving: false });
+      return true;
+    }
+    const sorted = [...this.pallets].sort((a, b) => a.front - b.front);
+    let best = -1;
+    let bestFree = -Infinity;
+    sorted.forEach((p, i) => {
+      const next = sorted[(i + 1) % sorted.length];
+      const free = (sorted.length === 1 ? this.L : ahead(p.front, next.front, this.L)) - len;
+      if (free > bestFree) {
+        bestFree = free;
+        best = i;
+      }
+    });
+    if (bestFree < len + 2 * gap) return false;
+    const behind = sorted[best];
+    const front = wrap(behind.front + gap + len + (bestFree - len - 2 * gap) / 2, this.L);
+    this.pallets.push({ id, front, part: false, moving: false });
+    return true;
+  }
+
+  /** Quita la última paleta añadida. */
+  removePallet(): boolean {
+    if (!this.pallets.length) return false;
+    const last = this.pallets.reduce((a, b) => (b.id > a.id ? b : a));
+    this.pallets = this.pallets.filter((p) => p !== last);
+    return true;
+  }
+
+  /** Progreso del trabajo de una estación (0–1), o null si no tiene paleta. */
+  stationProgress(stop: string): { pallet: number; progress: number; action: 'load' | 'unload' } | null {
+    const st = this.stations.find((s) => s.stop === stop);
+    if (!st || st.pallet === null) return null;
+    return { pallet: st.pallet, progress: st.done ? 1 : Math.min(1, st.timer / Math.max(1, st.cycleMs)), action: st.action };
+  }
+
   motorOn(): boolean {
     return this.layout.motor ? this.sim.states[this.layout.motor] === 1 : true;
   }

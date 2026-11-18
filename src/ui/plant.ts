@@ -6,8 +6,9 @@
  *    extremo izquierdo; los inductivos y la presencia van en el propio tope),
  *    sensores de línea (paso de paleta, acumulación máxima…) colocados por su
  *    distancia a un tope o al extremo, y estaciones de robot.
- * 3. Vista animada: paletas, topes, sensores y robots, acoplados al PLC
- *    simulado, con mandos para provocar fallos y pulsar botones.
+ * 3. Vista animada (3D o plano): paletas, topes y sensores acoplados al PLC
+ *    simulado, con paletas que se añaden o quitan en marcha y mandos para
+ *    provocar fallos y pulsar botones.
  */
 
 import { allRules, commit, project } from '../state/store';
@@ -26,6 +27,7 @@ import {
 import type { ConveyorLayout, ConveyorLine, LayoutSensor, LayoutStation, LayoutStop, Signal, SignalLevel } from '../types';
 import { esc, h, icon, qs, toast } from './dom';
 import type { App } from './app';
+import type { CameraPreset, PlantView } from '../plant/view3d';
 
 const ui = {
   running: true,
@@ -33,6 +35,8 @@ const ui = {
   editing: false,
   plant: null as Plant | null,
   signature: '',
+  view: '3d' as '3d' | 'plan',
+  labels: true,
 };
 
 const SPEEDS = [1, 2, 5, 10];
@@ -59,13 +63,19 @@ export function renderPlant(app: App): HTMLElement {
   const issues = validateLayout(layout, signals);
   const errors = issues.filter((i) => i.level === 'error');
 
-  const signature = JSON.stringify([p.id, signals, rules, layout]);
+  // El número de paletas no reinicia la simulación: se añaden o quitan en marcha.
+  const signature = JSON.stringify([p.id, signals, rules, { ...layout, pallets: 0 }]);
   if (ui.signature !== signature) {
     ui.plant = null;
     ui.signature = signature;
   }
   if (!ui.plant && !errors.length) ui.plant = new Plant(layout, signals, rules);
   const plant = ui.plant;
+  if (plant) {
+    while (plant.pallets.length < layout.pallets && plant.addPallet());
+    while (plant.pallets.length > layout.pallets && plant.removePallet());
+  }
+  const use3d = ui.view === '3d' && !!plant;
 
   root.innerHTML = `
     <div class="card card--flush">
@@ -76,7 +86,19 @@ export function renderPlant(app: App): HTMLElement {
           ${SPEEDS.map((s) => `<button role="radio" data-speed="${s}" class="${s === ui.speed ? 'is-active' : ''}" aria-checked="${s === ui.speed}">×${s}</button>`).join('')}
         </div>
         <span class="plant-clock mono" data-slot="clock">00:00</span>
+        <div class="stepper" role="group" aria-label="Paletas en el lazo">
+          <span class="stepper__label">Paletas</span>
+          <button class="stepper__btn" data-pl="pminus" aria-label="Quitar una paleta"${plant ? '' : ' disabled'}>−</button>
+          <output class="stepper__val mono" data-slot="pcount">${plant ? plant.pallets.length : layout.pallets}</output>
+          <button class="stepper__btn" data-pl="pplus" aria-label="Añadir una paleta"${plant ? '' : ' disabled'}>+</button>
+          <span class="stepper__max muted small">máx. ${plant ? plant.capacity() : '—'}</span>
+        </div>
         <span class="toolbar__spacer"></span>
+        <div class="segmented segmented--sm" role="radiogroup" aria-label="Vista">
+          <button role="radio" data-view="3d" class="${ui.view === '3d' ? 'is-active' : ''}" aria-checked="${ui.view === '3d'}">3D</button>
+          <button role="radio" data-view="plan" class="${ui.view === 'plan' ? 'is-active' : ''}" aria-checked="${ui.view === 'plan'}">Plano</button>
+        </div>
+        ${use3d ? `<label class="check"><input type="checkbox" data-pl-labels${ui.labels ? ' checked' : ''}/> Nombres</label>` : ''}
         <button class="btn btn--ghost btn--sm${ui.editing ? ' is-pressed' : ''}" data-pl="edit" aria-pressed="${ui.editing}">${icon('edit', 15)}<span>Medidas y posiciones</span></button>
       </div>
       ${issues.length ? `<div class="plant-issues">${issues.map((i) => `<p class="plant-issue plant-issue--${i.level}">${icon('alert', 15)}${esc(i.text)}</p>`).join('')}</div>` : ''}
@@ -95,9 +117,44 @@ export function renderPlant(app: App): HTMLElement {
     }`;
 
   const canvas = qs(root, '[data-slot="canvas"]');
-  const scene = buildScene(layout, signals);
-  canvas.innerHTML = scene.svg;
-  const svg = canvas.querySelector('svg')!;
+  let view: Pick<PlantView, 'update'> & Partial<PlantView> = { update: () => {} };
+  const showPlan = () => {
+    const scene = buildScene(layout, signals);
+    canvas.classList.remove('plant-canvas--3d');
+    canvas.innerHTML = scene.svg;
+    const svg = canvas.querySelector('svg')!;
+    view = { update: (pl) => scene.update(svg, pl) };
+    if (plant) view.update(plant);
+  };
+  if (use3d) {
+    canvas.classList.add('plant-canvas--3d');
+    canvas.innerHTML = `<div class="plant3d plant3d--loading"><span class="muted">Cargando vista 3D…</span></div>`;
+    import('../plant/view3d')
+      .then(({ createView3d }) => {
+        if (!root.isConnected) return;
+        const v = createView3d(layout, signals, { labels: ui.labels });
+        if (!v) {
+          ui.view = 'plan';
+          toast('Este navegador no puede mostrar la vista 3D. Se muestra el plano.', 'warn');
+          showPlan();
+          return;
+        }
+        canvas.innerHTML = '';
+        canvas.appendChild(v.el);
+        canvas.insertAdjacentHTML(
+          'beforeend',
+          `<div class="plant3d__cams segmented segmented--sm" role="group" aria-label="Cámara">
+            <button data-cam="general">General</button><button data-cam="planta">Planta</button><button data-cam="frontal">Frontal</button>
+          </div>
+          <p class="plant3d__hint">Arrastra para girar · rueda para acercar · botón derecho para desplazar</p>`,
+        );
+        view = v;
+      })
+      .catch(() => {
+        toast('No se pudo cargar la vista 3D. Se muestra el plano.', 'warn');
+        showPlan();
+      });
+  } else showPlan();
 
   if (ui.editing) {
     qs(root, '[data-slot="editor"]').appendChild(
@@ -115,7 +172,28 @@ export function renderPlant(app: App): HTMLElement {
     const sp = t.closest<HTMLElement>('[data-speed]')?.dataset.speed;
     const tog = t.closest<HTMLElement>('[data-pl-toggle]')?.dataset.plToggle;
     const pulse = t.closest<HTMLElement>('[data-pl-pulse]')?.dataset.plPulse;
-    if (sp) {
+    const vw = t.closest<HTMLElement>('[data-view]')?.dataset.view as typeof ui.view | undefined;
+    const cam = t.closest<HTMLElement>('[data-cam]')?.dataset.cam as CameraPreset | undefined;
+    if (vw) {
+      if (vw !== ui.view) {
+        ui.view = vw;
+        app.refresh();
+      }
+    } else if (cam) {
+      view.setCamera?.(cam);
+    } else if ((act === 'pplus' || act === 'pminus') && plant) {
+      const ok = act === 'pplus' ? plant.addPallet() : plant.removePallet();
+      if (!ok) {
+        toast(act === 'pplus' ? `No cabe otra paleta: el lazo admite como mucho ${plant.capacity()}.` : 'No quedan paletas.', 'warn');
+        return;
+      }
+      layout.pallets = plant.pallets.length;
+      commit();
+      qs(root, '[data-slot="pcount"]').textContent = String(plant.pallets.length);
+      const dims = root.querySelector<HTMLInputElement>('.plant-editor input[name="pallets"]');
+      if (dims) dims.value = String(plant.pallets.length);
+      drawPanels(true);
+    } else if (sp) {
       ui.speed = Number(sp);
       root.querySelectorAll<HTMLElement>('[data-speed]').forEach((b) => {
         b.classList.toggle('is-active', b.dataset.speed === sp);
@@ -145,6 +223,13 @@ export function renderPlant(app: App): HTMLElement {
       }, 400);
       drawPanels(true);
     }
+  });
+
+  root.addEventListener('change', (e) => {
+    const t = e.target as HTMLInputElement;
+    if (!t.matches('[data-pl-labels]')) return;
+    ui.labels = t.checked;
+    view.setLabels?.(t.checked);
   });
 
   // ---- Paneles -------------------------------------------------------------
@@ -187,7 +272,8 @@ export function renderPlant(app: App): HTMLElement {
       const cyc = plant.stationCycles();
       prod.innerHTML = `<dl class="plant-stats">
         <div><dt>Motor</dt><dd class="${plant.motorOn() ? 'ok' : 'bad'}">${plant.motorOn() ? 'En marcha' : 'Parado'}</dd></div>
-        <div><dt>Paletas</dt><dd>${plant.pallets.length} · ${plant.pallets.filter((x) => x.part).length} con pieza</dd></div>
+        <div><dt>Paletas en el lazo</dt><dd>${plant.pallets.length} de ${plant.capacity()} posibles</dd></div>
+        <div><dt>Paletas paradas</dt><dd>${plant.pallets.filter((x) => !x.moving).length}</dd></div>
         ${cyc.map((c) => `<div><dt>${esc(c.label)}</dt><dd>${c.cycles} ciclos · ${c.perMin.toFixed(1)}/min</dd></div>`).join('')}
       </dl>`;
     }
@@ -210,16 +296,18 @@ export function renderPlant(app: App): HTMLElement {
     const clock = root.querySelector<HTMLElement>('[data-slot="clock"]')!;
     let last = performance.now();
     const frame = (now: number) => {
-      if (!root.isConnected || ui.plant !== plant) return;
+      if (!root.isConnected || ui.plant !== plant) {
+        view.dispose?.();
+        return;
+      }
       const dt = Math.min(100, now - last);
       last = now;
       if (ui.running && !document.hidden) plant.step(dt * ui.speed);
-      scene.update(svg, plant);
+      view.update(plant);
       clock.textContent = fmtTime(plant.time);
       drawPanels();
       requestAnimationFrame(frame);
     };
-    scene.update(svg, plant);
     drawPanels(true);
     requestAnimationFrame(frame);
   }
@@ -663,7 +751,7 @@ function buildScene(layout: ConveyorLayout, signals: Signal[]): Scene {
       g.innerHTML = plant.pallets
         .map(
           (p) =>
-            `<g class="pl-pallet" data-pallet="${p.id}"><rect x="${r1(-plen / 2)}" y="${-(BW / 2 - 3)}" width="${r1(plen)}" height="${BW - 6}" rx="3"/><rect class="pl-part" x="-6" y="-6" width="12" height="12" rx="2"/></g>`,
+            `<g class="pl-pallet" data-pallet="${p.id}"><rect x="${r1(-plen / 2)}" y="${-(BW / 2 - 3)}" width="${r1(plen)}" height="${BW - 6}" rx="3"/><text class="pl-pallet__id" x="0" y="4" text-anchor="middle">P${p.id}</text></g>`,
         )
         .join('');
     }
@@ -672,7 +760,6 @@ function buildScene(layout: ConveyorLayout, signals: Signal[]): Scene {
       if (!el) return;
       const mid = pointAt(layout, p.front - layout.palletLength / 2);
       el.setAttribute('transform', `translate(${r1(X(mid.x))} ${r1(Y(mid.y))}) rotate(${r1((mid.heading * 180) / Math.PI)})`);
-      el.classList.toggle('has-part', p.part);
       el.classList.toggle('is-stopped', !p.moving);
     });
     svg.querySelectorAll<SVGLineElement>('[data-pin]').forEach((pin) => {

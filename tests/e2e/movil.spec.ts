@@ -12,7 +12,7 @@ test('móvil 390 px: ninguna sección se desborda en horizontal', async ({ page 
   }
   await go(page, 'sim');
   await page.locator('[data-mode="plant"]').click();
-  await expect(page.locator('.plant-svg')).toBeVisible();
+  await expect(page.locator('.plant3d canvas')).toBeVisible({ timeout: 15_000 });
   const plant = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(plant, 'desbordamiento en el transportador').toBeLessThanOrEqual(0);
   await page.locator('[data-pl="edit"]').click();

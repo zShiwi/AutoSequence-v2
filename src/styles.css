@@ -2301,6 +2301,188 @@ select.input {
   color: var(--primary);
 }
 
+.plant-canvas--3d {
+  position: relative;
+  padding: 0;
+  background: var(--surface-2);
+}
+
+.plant3d {
+  position: relative;
+  height: clamp(380px, 52vw, 620px);
+  overflow: hidden;
+}
+
+.plant3d canvas {
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+
+.plant3d canvas:active {
+  cursor: grabbing;
+}
+
+.plant3d--loading {
+  display: grid;
+  place-items: center;
+}
+
+.plant3d__labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.plant3d.no-labels .tag3d {
+  display: none;
+}
+
+.plant3d__cams {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  box-shadow: var(--shadow);
+}
+
+.plant3d__cams button {
+  font-family: var(--font);
+}
+
+.plant3d__hint {
+  position: absolute;
+  left: 12px;
+  bottom: 8px;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.tag3d {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 6px;
+  align-items: center;
+  padding: 3px 8px 3px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 1px 3px rgba(10, 20, 30, 0.14);
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1.25;
+}
+
+.tag3d b {
+  font: 600 11.5px var(--mono);
+}
+
+.tag3d small {
+  grid-column: 2;
+  font: 500 10.5px var(--font);
+  color: var(--ink-3);
+}
+
+.tag3d__dot {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.tag3d.is-on .tag3d__dot,
+.tag3d.is-open .tag3d__dot,
+.tag3d.is-done .tag3d__dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
+}
+
+.tag3d.is-bad .tag3d__dot {
+  background: var(--err);
+}
+
+.tag3d--station.is-on .tag3d__dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.tag3d--sensor.is-on {
+  border-color: var(--t-in);
+}
+
+.tag3d--small {
+  padding: 1px 6px 1px 5px;
+}
+
+.tag3d--small b {
+  font-size: 10.5px;
+}
+
+.tag3d--small small {
+  font-size: 9.5px;
+}
+
+.tag3d--pallet {
+  display: block;
+  padding: 0 5px;
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.tag3d--pallet b {
+  font-size: 10.5px;
+}
+
+.tag3d--pallet.is-stopped {
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stepper__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.stepper__btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 16px var(--font);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stepper__btn:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.stepper__val {
+  min-width: 22px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pl-pallet__id {
+  font: 600 10px var(--mono);
+  fill: var(--primary);
+}
+
 .plant-issues {
   display: grid;
   gap: 4px;
