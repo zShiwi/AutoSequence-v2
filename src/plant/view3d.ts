@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ConveyorLayout, Signal } from '../types';
 import type { Plant } from './engine';
 import { PRESENCE_BEFORE_STOP, loopLength, pointAt, sensorS, stopS } from './layout';
@@ -35,9 +36,12 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 /** Devuelve null si el navegador no puede dibujar WebGL. */
 export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { labels: boolean }): PlantView | null {
+  // Sin aceleración gráfica (máquinas virtuales, escritorio remoto…) se
+  // arranca en modo ligero: sin reflejos, sin sombras y con menos resolución.
+  const soft = softwareRenderer();
   let renderer: THREE.WebGLRenderer;
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer = new THREE.WebGLRenderer({ antialias: !soft, powerPreference: 'high-performance' });
   } catch {
     return null;
   }
@@ -46,11 +50,11 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   // ---- Contenedor ----------------------------------------------------------
   const el = document.createElement('div');
   el.className = 'plant3d';
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setPixelRatio(soft ? 0.75 : Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.92;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !soft;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   el.appendChild(renderer.domElement);
   const labelRenderer = new CSS2DRenderer();
@@ -65,9 +69,11 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const scene = new THREE.Scene();
   scene.background = bg;
   scene.fog = new THREE.Fog(bg, 18, 60);
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  const pmrem = soft ? null : new THREE.PMREMGenerator(renderer);
+  const envTex = pmrem ? pmrem.fromScene(new RoomEnvironment(), 0.04).texture : null;
   scene.environment = envTex;
+  const fill = new THREE.AmbientLight(0xffffff, soft ? 0.9 : 0);
+  scene.add(fill);
 
   const S = layout.length / 1000;
   const R = layout.radius / 1000;
@@ -80,8 +86,8 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   scene.add(new THREE.HemisphereLight(0xffffff, dark ? 0x202830 : 0x6f767c, dark ? 0.5 : 0.55));
   const sun = new THREE.DirectionalLight(0xffffff, dark ? 1.6 : 2.1);
   sun.position.set(-span * 0.35, 9, 6);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.castShadow = !soft;
+  sun.shadow.mapSize.set(1024, 1024);
   const sc = sun.shadow.camera;
   sc.left = -span / 2 - 3;
   sc.right = span / 2 + 3;
@@ -261,6 +267,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const wheels: THREE.Object3D[] = [];
   [-S / 2, S / 2].forEach((x) => {
     const wheel = new THREE.Group();
+    wheel.userData.dyn = true;
     const disc = cyl(R + w / 2 + 0.015, 0.018, darkSteel, 64);
     wheel.add(disc);
     for (let i = 0; i < 12; i++) {
@@ -345,6 +352,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     fanCover.rotation.z = Math.PI / 2;
     fanCover.position.set(0.17, -0.02, 0);
     mg.add(fanCover);
+    fanCover.userData.dyn = true;
     fan.push(fanCover);
     const shaft = cyl(0.03, 0.12, steel);
     shaft.position.set(0, 0.14, 0);
@@ -410,6 +418,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     rod.position.set(0.03, railBot + 0.05, 0);
     const headMat = mat({ color: 0xc62828, metalness: 0.2, roughness: 0.5, emissive: 0x000000 });
     const head = box(0.035, 0.06, w * 0.5, headMat);
+    head.userData.dyn = true;
     head.position.set(0.02, H + 0.005, 0);
     const lamp = led(0.009);
     lamp.position.set(0.03, railBot - 0.06, 0.042);
@@ -484,6 +493,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     arrow.scale.set(1, 1, 0.25);
     arrow.position.set(0, H + 0.068, 0);
     g.add(plate, strip, fixture, pinA, pinB, bush, bush2, arrow);
+    mergeStatic(g);
     palletRoot.add(g);
     const label = tag(`<b>P${id}</b>`, 'tag3d--pallet', g, 0, H + 0.2, 0);
     return { g, label };
@@ -516,6 +526,8 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     controls.update();
   };
   setCamera('general');
+  mergeStatic(conveyor);
+  if (soft) lighten();
 
   // ---- Tamaño ------------------------------------------------------------------
   const resize = () => {
@@ -547,6 +559,15 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     lastTime = plant.time;
     const motor = plant.motorOn();
     if (motor) travel += (layout.speed * dt) / 1000; // mm
+    // Si va lento se baja la calidad y, en último caso, se dibujan menos
+    // fotogramas para que la página siga respondiendo.
+    const now = performance.now();
+    if (lastFrame) ema = ema ? ema * 0.9 + (now - lastFrame) * 0.1 : now - lastFrame;
+    lastFrame = now;
+    if (ema > 45) {
+      if (++slowFrames > 30) degrade();
+    } else slowFrames = 0;
+    if (skip && frameNo++ % (skip + 1) !== 0) return;
     chainTex.offset.x = -((travel / 1000 / PITCH) % 1);
     const dir = layout.direction === 'cw' ? 1 : -1;
     wheels.forEach((wh) => (wh.rotation.y = dir * ((travel / 1000) / R)));
@@ -584,6 +605,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     pallets.forEach((o, id) => {
       if (alive.has(id)) return;
       palletRoot.remove(o.g);
+      o.g.traverse((n) => n instanceof THREE.Mesh && n.geometry.dispose());
       o.g.traverse((n) => n instanceof CSS2DObject && n.element.remove());
       pallets.delete(id);
     });
@@ -619,6 +641,39 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
   };
+  let lastFrame = 0;
+  let ema = 0;
+  let slowFrames = 0;
+  let skip = 0;
+  let frameNo = 0;
+  let quality = soft ? 3 : 6;
+  /** Baja la calidad paso a paso: sombras, reflejos, resolución y fotogramas. */
+  const degrade = () => {
+    slowFrames = 0;
+    ema = 0;
+    if (quality === 6) {
+      renderer.shadowMap.enabled = false;
+      sun.castShadow = false;
+      mats.forEach((m) => (m.needsUpdate = true));
+    } else if (quality === 5) lighten();
+    else if (quality === 4) renderer.setPixelRatio(Math.min(1, renderer.getPixelRatio()));
+    else if (quality === 3) renderer.setPixelRatio(0.6);
+    else if (quality === 2) skip = 1;
+    else if (quality === 1) skip = 2;
+    else return;
+    quality--;
+    el.dataset.quality = String(quality);
+    resize();
+  };
+  /** Sin mapa de reflejos: menos brillo metálico y más luz ambiente. */
+  function lighten() {
+    scene.environment = null;
+    fill.intensity = 0.9;
+    mats.forEach((m) => {
+      if (m instanceof THREE.MeshStandardMaterial) m.metalness *= 0.35;
+      m.needsUpdate = true;
+    });
+  }
 
   const dispose = () => {
     ro.disconnect();
@@ -628,8 +683,8 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     });
     mats.forEach((m) => m.dispose());
     chainTex.dispose();
-    envTex.dispose();
-    pmrem.dispose();
+    envTex?.dispose();
+    pmrem?.dispose();
     renderer.dispose();
     el.remove();
   };
@@ -641,6 +696,60 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     setLabels: (on) => el.classList.toggle('no-labels', !on),
     setCamera,
   };
+}
+
+/** ¿El navegador dibuja WebGL por software (sin tarjeta gráfica)? */
+function softwareRenderer(): boolean {
+  try {
+    const c = document.createElement('canvas');
+    const gl = (c.getContext('webgl2') || c.getContext('webgl')) as WebGLRenderingContext | null;
+    if (!gl) return false;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Une las mallas fijas de un grupo en una por material: muchas menos órdenes
+ * de dibujo. Se respetan las piezas que se mueven (marcadas con userData.dyn).
+ */
+function mergeStatic(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const byMat = new Map<THREE.Material, { meshes: THREE.Mesh[]; geos: THREE.BufferGeometry[] }>();
+  const dyn = (o: THREE.Object3D | null) => {
+    for (let n = o; n && n !== root; n = n.parent) if (n.userData.dyn) return true;
+    return false;
+  };
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || Array.isArray(o.material) || dyn(o)) return;
+    const g = o.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+    Object.keys(g.attributes).forEach((k) => ['position', 'normal', 'uv'].includes(k) || g.deleteAttribute(k));
+    if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
+    let e = byMat.get(o.material);
+    if (!e) byMat.set(o.material, (e = { meshes: [], geos: [] }));
+    e.meshes.push(o);
+    e.geos.push(g);
+  });
+  byMat.forEach(({ meshes, geos }, m) => {
+    if (meshes.length < 2) return geos.forEach((g) => g.dispose());
+    const merged = mergeGeometries(geos);
+    geos.forEach((g) => g.dispose());
+    if (!merged) return;
+    meshes.forEach((x) => {
+      x.parent?.remove(x);
+      x.geometry.dispose();
+    });
+    const mesh = new THREE.Mesh(merged, m);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    root.add(mesh);
+  });
 }
 
 /** Textura de cadena de rodillos: dos eslabones por repetición. */
