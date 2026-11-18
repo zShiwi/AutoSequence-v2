@@ -3072,6 +3072,27 @@ select.input {
 
   .crumbs {
     padding-left: 12px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* La barra no debe ensanchar la página: la ruta del proyecto se recorta. */
+  .topbar {
+    min-width: 0;
+  }
+
+  .crumbs__project {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .crumbs__project span {
+    max-width: none;
+  }
+
+  .topbar__group {
+    padding: 0 2px;
+    margin-right: 0;
   }
 
   .crumbs__link,

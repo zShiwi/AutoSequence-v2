@@ -80,6 +80,22 @@ npm run build      # type-check + build de producción
 npm run preview    # sirve la build
 ```
 
+## Tests
+
+```bash
+npm test           # unitarios (Vitest): simulación, AWL/KOP, plantillas, persistencia
+npm run test:e2e   # de navegador (Playwright): flujos completos en Chromium
+```
+
+Los tests de navegador están en `tests/e2e/*.spec.ts`; compilan la app y la
+sirven con `vite preview` (puerto 4173, o `E2E_PORT`). La primera vez hay que
+instalar el navegador con `npx playwright install chromium`; si ya hay un
+Chromium instalado, se puede usar con `PW_CHROMIUM=/ruta/al/chrome`.
+
+En GitHub, cada push ejecuta los unitarios, la compilación y los tests de
+navegador; solo si todo pasa se publica en GitHub Pages. Si fallan los de
+navegador, el informe queda como artefacto del workflow.
+
 ## Pendiente
 
 - Editor de dibujo libre sobre las hojas (presente en el prototipo).
