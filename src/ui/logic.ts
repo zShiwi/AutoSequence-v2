@@ -6,6 +6,7 @@ import type { Action, ActionValue, Condition, ConditionEvent, Rule } from '../ty
 import { confirmDialog, esc, h, icon, modal, promptDialog, qs, toast } from './dom';
 import type { App } from './app';
 import { conditionGroups } from '../plc/rules';
+import { ruleMatches } from './search';
 
 const EVENTS: { v: ConditionEvent; label: string; chip: string }[] = [
   { v: '==1', label: '= 1  (activa)', chip: '= 1' },
@@ -20,6 +21,8 @@ const VALUES: { v: ActionValue; label: string; chip: string }[] = [
 ];
 
 let activeBlock = 0;
+/** Búsqueda en todas las reglas (se conserva al cambiar de sección). */
+let query = '';
 
 function autoName(r: Pick<Rule, 'conditions' | 'actions'>): string {
   const c = r.conditions.map((x) => x.signal).filter(Boolean).slice(0, 2).join(' + ');
@@ -27,29 +30,35 @@ function autoName(r: Pick<Rule, 'conditions' | 'actions'>): string {
   return `${c || '…'} → ${a || '…'}`;
 }
 
-function condChip(c: Condition, known: Set<string>): string {
+/** Nombre de señal de un chip; clicable para buscar dónde se usa. */
+function sigName(signal: string, clickable: boolean): string {
+  if (!clickable || !signal) return `<code>${esc(signal || '?')}</code>`;
+  return `<code class="chip__sig" role="button" tabindex="0" data-sig="${esc(signal)}" title="Buscar dónde se usa ${esc(signal)}">${esc(signal)}</code>`;
+}
+
+function condChip(c: Condition, known: Set<string>, clickable = false): string {
   const ev = EVENTS.find((e) => e.v === c.event);
   const missing = !known.has(c.signal);
-  return `<span class="chip chip--cond${missing ? ' chip--missing' : ''}"${missing ? ' title="Esta señal no existe"' : ''}><code>${esc(c.signal || '?')}</code><b>${ev?.chip ?? c.event}</b></span>`;
+  return `<span class="chip chip--cond${missing ? ' chip--missing' : ''}"${missing ? ' title="Esta señal no existe"' : ''}>${sigName(c.signal, clickable)}<b>${ev?.chip ?? c.event}</b></span>`;
 }
 
 /** Condiciones de una regla: Y entre grupos; los grupos «O» entre paréntesis. */
-function condsHtml(conditions: Condition[], known: Set<string>): string {
+function condsHtml(conditions: Condition[], known: Set<string>, clickable = false): string {
   return conditionGroups(conditions)
     .map((g) =>
       g.length === 1
-        ? condChip(g[0], known)
+        ? condChip(g[0], known, clickable)
         : `<span class="or-group"><span class="or-group__paren">(</span>${g
-            .map((c) => condChip(c, known))
+            .map((c) => condChip(c, known, clickable))
             .join('<span class="kw kw--or">O</span>')}<span class="or-group__paren">)</span></span>`,
     )
     .join('<span class="kw kw--and">Y</span>');
 }
 
-function actChip(a: Action, known: Set<string>): string {
+function actChip(a: Action, known: Set<string>, clickable = false): string {
   const v = VALUES.find((x) => x.v === a.value);
   const missing = !known.has(a.signal);
-  return `<span class="chip chip--act chip--${a.value === '1' ? 'set' : a.value === '0' ? 'reset' : 'toggle'}${missing ? ' chip--missing' : ''}"${missing ? ' title="Esta señal no existe"' : ''}><b>${v?.chip ?? a.value}</b><code>${esc(a.signal || '?')}</code></span>`;
+  return `<span class="chip chip--act chip--${a.value === '1' ? 'set' : a.value === '0' ? 'reset' : 'toggle'}${missing ? ' chip--missing' : ''}"${missing ? ' title="Esta señal no existe"' : ''}><b>${v?.chip ?? a.value}</b>${sigName(a.signal, clickable)}</span>`;
 }
 
 export function renderLogic(app: App): HTMLElement {
@@ -68,8 +77,13 @@ export function renderLogic(app: App): HTMLElement {
           <button class="btn btn--primary" data-act="new">${icon('plus', 16)}<span>Nueva regla</span></button>
         </div>
       </header>
-      <div class="tabs-bar">
+      <div class="tabs-bar tabs-bar--search">
         <div class="tabs" role="tablist" data-slot="tabs"></div>
+        <label class="searchbox searchbox--sm" data-slot="rsearch">
+          ${icon('search', 15)}
+          <input type="search" class="searchbox__input" data-f="rq" placeholder="Buscar regla, señal o R-número…" aria-label="Buscar en todas las reglas" autocomplete="off" spellcheck="false" />
+          <button type="button" class="searchbox__clear" data-act="clear-rq" aria-label="Borrar búsqueda" hidden>${icon('x', 14)}</button>
+        </label>
         <div class="tabs-bar__tools" data-slot="blocktools"></div>
       </div>
       <section data-slot="rules"></section>
@@ -82,14 +96,55 @@ export function renderLogic(app: App): HTMLElement {
   const tabs = qs(page, '[data-slot="tabs"]');
   const tools = qs(page, '[data-slot="blocktools"]');
   const list = qs(page, '[data-slot="rules"]');
+  const rsearch = qs(page, '[data-slot="rsearch"]');
+  const rqInput = qs<HTMLInputElement>(rsearch, '[data-f="rq"]');
+
+  /** Tarjeta de una regla. `search` = vista de resultados (todos los bloques). */
+  const ruleItem = (r: Rule, bi: number, ri: number, num: number, known: Set<string>, search: boolean): string => {
+    const rules = p.blocks[bi].rules;
+    const missing =
+      r.conditions.some((c) => !known.has(c.signal)) || r.actions.some((a) => !known.has(a.signal));
+    return `
+          <li class="rule${missing ? ' rule--warn' : ''}" data-b="${bi}" data-i="${ri}">
+            <div class="rule__num" title="Número de regla en todo el programa (= Network ${num} del KOP)">R${num}</div>
+            <div class="rule__main">
+              <div class="rule__title">${search ? `<span class="badge badge--block" title="Bloque">${esc(p.blocks[bi].name)}</span>` : ''}${esc(r.name)}${missing ? `<span class="badge badge--warn">${icon('alert', 13)}Señal inexistente</span>` : ''}</div>
+              <div class="rule__logic">
+                <span class="kw">SI</span>
+                ${condsHtml(r.conditions, known, true)}
+                <span class="kw kw--then">${icon('chevronRight', 14)} ENTONCES</span>
+                ${r.actions.map((a) => actChip(a, known, true)).join('')}
+              </div>
+            </div>
+            <div class="rule__tools">
+              <button class="icon-btn" data-r="up" title="${search ? 'Quita la búsqueda para reordenar' : 'Subir'}" aria-label="Subir regla"${search || ri === 0 ? ' disabled' : ''}>${icon('arrowUp', 16)}</button>
+              <button class="icon-btn" data-r="down" title="${search ? 'Quita la búsqueda para reordenar' : 'Bajar'}" aria-label="Bajar regla"${search || ri === rules.length - 1 ? ' disabled' : ''}>${icon('arrowDown', 16)}</button>
+              <button class="icon-btn" data-r="dup" title="Duplicar" aria-label="Duplicar regla">${icon('duplicate', 16)}</button>
+              <button class="icon-btn" data-r="edit" title="Editar" aria-label="Editar regla">${icon('edit', 16)}</button>
+              <button class="icon-btn icon-btn--danger" data-r="del" title="Eliminar" aria-label="Eliminar regla">${icon('trash', 16)}</button>
+            </div>
+          </li>`;
+  };
 
   const draw = () => {
     const known = new Set(allSignalNames(cleanSignals(p.signals)));
+    const searching = !!query.trim();
+    const offsets = p.blocks.map((_, i) => p.blocks.slice(0, i).reduce((n, b) => n + b.rules.length, 0));
+    const hits = p.blocks.map((b, bi) =>
+      b.rules.map((r, ri) => ({ r, ri })).filter(({ r, ri }) => ruleMatches(r, `R${offsets[bi] + ri + 1}`, query)),
+    );
+
+    if (rqInput.value !== query) rqInput.value = query;
+    qs(rsearch, '[data-act="clear-rq"]').hidden = !query;
     tabs.innerHTML = p.blocks
-      .map(
-        (b, i) =>
-          `<button role="tab" class="tab${i === activeBlock ? ' is-active' : ''}" aria-selected="${i === activeBlock}" data-i="${i}">${esc(b.name)}<span class="tab__count">${b.rules.length}</span></button>`,
-      )
+      .map((b, i) => {
+        const on = !searching && i === activeBlock;
+        const n = hits[i].length;
+        const count = searching
+          ? `<span class="tab__count tab__count--match${n ? '' : ' is-zero'}" title="${n} de ${b.rules.length} reglas coinciden">${n}</span>`
+          : `<span class="tab__count">${b.rules.length}</span>`;
+        return `<button role="tab" class="tab${on ? ' is-active' : ''}${searching && !n ? ' is-dim' : ''}" aria-selected="${on}" data-i="${i}"${searching ? ' title="Ir al bloque (quita la búsqueda)"' : ''}>${esc(b.name)}${count}</button>`;
+      })
       .join('');
     tools.innerHTML = `
       <button class="btn btn--ghost btn--sm" data-act="block-new">${icon('plus', 15)}<span>Bloque</span></button>
@@ -97,8 +152,23 @@ export function renderLogic(app: App): HTMLElement {
       <button class="icon-btn icon-btn--danger" data-act="block-delete" title="Eliminar bloque" aria-label="Eliminar bloque"${p.blocks.length < 2 ? ' disabled' : ''}>${icon('trash', 16)}</button>`;
 
     const block = p.blocks[activeBlock];
-    const offset = p.blocks.slice(0, activeBlock).reduce((n, b) => n + b.rules.length, 0);
-    if (!block.rules.length) {
+    const offset = offsets[activeBlock];
+    if (searching) {
+      const total = hits.reduce((n, h) => n + h.length, 0);
+      const blocks = hits.filter((h) => h.length).length;
+      list.innerHTML = total
+        ? `<p class="search-summary">${icon('search', 15)}<span><strong>${total}</strong> regla${total === 1 ? '' : 's'} coincide${total === 1 ? '' : 'n'} con «${esc(query.trim())}» en ${blocks} bloque${blocks === 1 ? '' : 's'}.</span>
+             <button type="button" class="link" data-act="clear-rq">Quitar búsqueda</button></p>
+           <ol class="rules">${hits
+             .flatMap((h, bi) => h.map(({ r, ri }) => ruleItem(r, bi, ri, offsets[bi] + ri + 1, known, true)))
+             .join('')}</ol>`
+        : `<div class="empty empty--compact">
+             <div class="empty__art" aria-hidden="true">${icon('search', 30)}</div>
+             <h2>Ninguna regla coincide con «${esc(query.trim())}»</h2>
+             <p>Busca por nombre de regla, por señal (p. ej. «PX04») o por número de regla (p. ej. «R11»).</p>
+             <div class="empty__actions"><button type="button" class="btn btn--ghost" data-act="clear-rq">${icon('x', 16)}<span>Quitar búsqueda</span></button></div>
+           </div>`;
+    } else if (!block.rules.length) {
       list.innerHTML = `
         <div class="empty empty--compact">
           <div class="empty__art" aria-hidden="true">${icon('logic', 30)}</div>
@@ -110,30 +180,7 @@ export function renderLogic(app: App): HTMLElement {
         </div>`;
     } else {
       list.innerHTML = `<ol class="rules">${block.rules
-        .map((r, i) => {
-          const missing =
-            r.conditions.some((c) => !known.has(c.signal)) || r.actions.some((a) => !known.has(a.signal));
-          return `
-          <li class="rule${missing ? ' rule--warn' : ''}" data-i="${i}">
-            <div class="rule__num" title="Número de regla en todo el programa (= Network ${offset + i + 1} del KOP)">R${offset + i + 1}</div>
-            <div class="rule__main">
-              <div class="rule__title">${esc(r.name)}${missing ? `<span class="badge badge--warn">${icon('alert', 13)}Señal inexistente</span>` : ''}</div>
-              <div class="rule__logic">
-                <span class="kw">SI</span>
-                ${condsHtml(r.conditions, known)}
-                <span class="kw kw--then">${icon('chevronRight', 14)} ENTONCES</span>
-                ${r.actions.map((a) => actChip(a, known)).join('')}
-              </div>
-            </div>
-            <div class="rule__tools">
-              <button class="icon-btn" data-r="up" title="Subir" aria-label="Subir regla"${i === 0 ? ' disabled' : ''}>${icon('arrowUp', 16)}</button>
-              <button class="icon-btn" data-r="down" title="Bajar" aria-label="Bajar regla"${i === block.rules.length - 1 ? ' disabled' : ''}>${icon('arrowDown', 16)}</button>
-              <button class="icon-btn" data-r="dup" title="Duplicar" aria-label="Duplicar regla">${icon('duplicate', 16)}</button>
-              <button class="icon-btn" data-r="edit" title="Editar" aria-label="Editar regla">${icon('edit', 16)}</button>
-              <button class="icon-btn icon-btn--danger" data-r="del" title="Eliminar" aria-label="Eliminar regla">${icon('trash', 16)}</button>
-            </div>
-          </li>`;
-        })
+        .map((r, i) => ruleItem(r, activeBlock, i, offset + i + 1, known, false))
         .join('')}</ol>`;
     }
 
@@ -147,7 +194,41 @@ export function renderLogic(app: App): HTMLElement {
     const t = (e.target as HTMLElement).closest<HTMLElement>('[data-i]');
     if (!t) return;
     activeBlock = Number(t.dataset.i);
+    query = '';
     draw();
+  });
+
+  // ---- Búsqueda -----------------------------------------------------------
+
+  const setQuery = (q: string) => {
+    query = q;
+    draw();
+  };
+  rqInput.addEventListener('input', () => setQuery(rqInput.value));
+  rqInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && rqInput.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      setQuery('');
+    }
+  });
+  page.addEventListener('click', (e) => {
+    if (!(e.target as HTMLElement).closest('[data-act="clear-rq"]')) return;
+    setQuery('');
+    rqInput.focus();
+  });
+  /** Clic en la señal de un chip: buscar dónde se usa. */
+  const searchSignal = (sig: string) => {
+    setQuery(sig);
+    rqInput.focus();
+    page.querySelector('.tabs-bar')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  list.addEventListener('keydown', (e) => {
+    const sig = (e.target as HTMLElement).closest<HTMLElement>('[data-sig]')?.dataset.sig;
+    if (sig && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      searchSignal(sig);
+    }
   });
 
   tools.addEventListener('click', async (e) => {
@@ -186,10 +267,14 @@ export function renderLogic(app: App): HTMLElement {
   });
 
   list.addEventListener('click', async (e) => {
+    const sig = (e.target as HTMLElement).closest<HTMLElement>('[data-sig]')?.dataset.sig;
+    if (sig) return searchSignal(sig);
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-r]');
     if (!btn) return;
-    const i = Number(btn.closest<HTMLElement>('[data-i]')!.dataset.i);
-    const rules = p.blocks[activeBlock].rules;
+    const item = btn.closest<HTMLElement>('[data-i]')!;
+    const i = Number(item.dataset.i);
+    const bi = Number(item.dataset.b ?? activeBlock);
+    const rules = p.blocks[bi].rules;
     switch (btn.dataset.r) {
       case 'up':
         [rules[i - 1], rules[i]] = [rules[i], rules[i - 1]];
@@ -206,7 +291,7 @@ export function renderLogic(app: App): HTMLElement {
         break;
       }
       case 'edit':
-        return openEditor(i);
+        return openEditor(i, bi);
       case 'del': {
         const ok = await confirmDialog('Eliminar regla', `¿Eliminar la regla <strong>${esc(rules[i].name)}</strong>?`, {
           confirm: 'Eliminar',
@@ -224,13 +309,13 @@ export function renderLogic(app: App): HTMLElement {
 
   // ---- Editor de reglas ---------------------------------------------------
 
-  const openEditor = (index?: number) => {
+  const openEditor = (index?: number, blockIndex = activeBlock) => {
     const signals = cleanSignals(p.signals);
     if (!signals.length) {
       toast('Primero define al menos una señal.', 'warn');
       return app.go('signals');
     }
-    const block = p.blocks[activeBlock];
+    const block = p.blocks[blockIndex];
     const original = index !== undefined ? block.rules[index] : undefined;
     const draft: Rule = original
       ? JSON.parse(JSON.stringify(original))

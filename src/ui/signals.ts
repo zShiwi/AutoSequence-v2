@@ -5,6 +5,7 @@ import { exampleBlocks, exampleSignals } from '../data/example';
 import { TYPE_HINT, derivedSignals, validateSignalName } from '../plc/signals';
 import type { Signal, SignalType } from '../types';
 import { confirmDialog, esc, h, icon, qs, toast } from './dom';
+import { signalMatches } from './search';
 import type { App } from './app';
 
 const TYPES: SignalType[] = ['Sensor', 'Motor', 'Cilindro', 'Virtual'];
@@ -14,6 +15,28 @@ const TYPE_ICON: Record<SignalType, string> = {
   Cilindro: 'cylinder',
   Virtual: 'virtual',
 };
+
+type TypeFilter = 'all' | SignalType;
+
+/** Filtros de la tabla (se conservan al cambiar de sección). */
+const filters = { q: '', type: 'all' as TypeFilter, unused: false };
+
+const TYPE_FILTERS: { v: TypeFilter; label: string }[] = [
+  { v: 'all', label: 'Todos' },
+  { v: 'Sensor', label: 'Sensor' },
+  { v: 'Motor', label: 'Motor' },
+  { v: 'Cilindro', label: 'Cilindro' },
+  { v: 'Virtual', label: 'Virtual' },
+];
+
+function filtersActive(): boolean {
+  return !!filters.q.trim() || filters.type !== 'all' || filters.unused;
+}
+
+/** Una señal está en uso si alguna regla la usa a ella o a sus inductivos. */
+function isUsed(s: Signal): boolean {
+  return [s.name, s.inductivoActivo, s.inductivoReposo].some((n) => !!n && signalUsage(n.trim()).length > 0);
+}
 
 function problems(signals: Signal[]): Map<number, string> {
   const out = new Map<number, string>();
@@ -49,6 +72,18 @@ export function renderSignals(app: App): HTMLElement {
         </div>
       </header>
       <div class="stats" data-slot="stats"></div>
+      <div class="filterbar" data-slot="filters" role="search" aria-label="Filtrar señales">
+        <label class="searchbox">
+          ${icon('search', 16)}
+          <input type="search" class="searchbox__input" data-f="q" placeholder="Buscar por nombre o descripción…" aria-label="Buscar señales" autocomplete="off" spellcheck="false" />
+          <button type="button" class="searchbox__clear" data-act="clear-q" aria-label="Borrar búsqueda" hidden>${icon('x', 14)}</button>
+        </label>
+        <div class="fchips" role="group" aria-label="Filtrar por tipo">
+          ${TYPE_FILTERS.map((t) => `<button type="button" class="fchip" data-type="${t.v}" aria-pressed="false">${t.label}</button>`).join('')}
+        </div>
+        <label class="check"><input type="checkbox" data-f="unused" /> Solo sin usar</label>
+        <span class="filterbar__count muted small" data-slot="count" aria-live="polite"></span>
+      </div>
       <section data-slot="body"></section>
       <footer class="page-foot">
         <span></span>
@@ -58,21 +93,72 @@ export function renderSignals(app: App): HTMLElement {
 
   const body = qs(page, '[data-slot="body"]');
   const stats = qs(page, '[data-slot="stats"]');
+  const filterBar = qs(page, '[data-slot="filters"]');
+  const qInput = qs<HTMLInputElement>(filterBar, '[data-f="q"]');
+  const unusedInput = qs<HTMLInputElement>(filterBar, '[data-f="unused"]');
+  /** Fila que se mantiene visible aunque deje de cumplir el filtro (se está editando). */
+  let keepVisible: number | null = null;
+
+  /** Refleja el estado de los filtros en los controles. */
+  const syncControls = () => {
+    if (qInput.value !== filters.q) qInput.value = filters.q;
+    unusedInput.checked = filters.unused;
+    qs(filterBar, '[data-act="clear-q"]').hidden = !filters.q;
+    page.querySelectorAll<HTMLButtonElement>('[data-type]').forEach((b) => {
+      const on = b.dataset.type === filters.type;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  };
+
+  /** Oculta las filas que no cumplen los filtros (sin volver a pintar la tabla). */
+  const applyFilters = () => {
+    syncControls();
+    const rows = body.querySelectorAll<HTMLTableRowElement>('tr[data-i]');
+    let shown = 0;
+    rows.forEach((tr) => {
+      const i = Number(tr.dataset.i);
+      const s = p.signals[i];
+      const ok =
+        i === keepVisible ||
+        ((filters.type === 'all' || s.type === filters.type) &&
+          (!filters.unused || !isUsed(s)) &&
+          signalMatches(s, filters.q));
+      tr.hidden = !ok;
+      if (ok) shown++;
+    });
+    const total = p.signals.length;
+    const count = qs(filterBar, '[data-slot="count"]');
+    count.textContent = filtersActive() ? `Mostrando ${shown} de ${total}` : `${total} señal${total === 1 ? '' : 'es'}`;
+    const empty = body.querySelector<HTMLElement>('[data-slot="fempty"]');
+    if (empty) empty.hidden = !(total > 0 && shown === 0);
+    const table = body.querySelector<HTMLElement>('.table-scroll');
+    if (table) table.hidden = total > 0 && shown === 0;
+  };
+
+  const clearFilters = () => {
+    filters.q = '';
+    filters.type = 'all';
+    filters.unused = false;
+    keepVisible = null;
+    applyFilters();
+  };
 
   const drawStats = () => {
     const s = p.signals;
     const count = (t: SignalType) => s.filter((x) => x.type === t).length;
     const ind = derivedSignals(s).length;
-    stats.innerHTML = [
-      ['Sensores', count('Sensor'), 'Entradas digitales'],
-      ['Motores', count('Motor'), 'Salidas digitales'],
-      ['Cilindros', count('Cilindro'), `${ind} inductivo${ind === 1 ? '' : 's'}`],
-      ['Virtuales', count('Virtual'), 'Marcas internas'],
-    ]
-      .map(
-        ([l, n, d]) =>
-          `<div class="stat"><span class="stat__label">${l}</span><span class="stat__value">${n}</span><span class="stat__hint">${d}</span></div>`,
-      )
+    const items: [SignalType, string, number, string][] = [
+      ['Sensor', 'Sensores', count('Sensor'), 'Entradas digitales'],
+      ['Motor', 'Motores', count('Motor'), 'Salidas digitales'],
+      ['Cilindro', 'Cilindros', count('Cilindro'), `${ind} inductivo${ind === 1 ? '' : 's'}`],
+      ['Virtual', 'Virtuales', count('Virtual'), 'Marcas internas'],
+    ];
+    stats.innerHTML = items
+      .map(([t, l, n, d]) => {
+        const on = filters.type === t;
+        return `<button type="button" class="stat stat--btn${on ? ' is-active' : ''}" data-type="${t}" aria-pressed="${on}" title="${on ? 'Quitar filtro' : `Mostrar solo ${l.toLowerCase()}`}"${s.length ? '' : ' disabled'}><span class="stat__label">${l}</span><span class="stat__value">${n}</span><span class="stat__hint">${d}</span></button>`;
+      })
       .join('');
   };
 
@@ -95,6 +181,7 @@ export function renderSignals(app: App): HTMLElement {
   };
 
   const draw = () => {
+    filterBar.hidden = !p.signals.length;
     if (!p.signals.length) {
       body.innerHTML = `
         <div class="empty">
@@ -163,6 +250,11 @@ export function renderSignals(app: App): HTMLElement {
             </tbody>
           </table>
         </div>
+        <div class="filter-empty" data-slot="fempty" hidden>
+          ${icon('search', 22)}
+          <p><strong>Ninguna señal coincide</strong> con la búsqueda y los filtros actuales.</p>
+          <button type="button" class="btn btn--ghost btn--sm" data-act="clear-filters">${icon('x', 15)}<span>Quitar filtros</span></button>
+        </div>
         <div class="card__foot">
           <button class="btn btn--ghost btn--sm" data-act="add">${icon('plus', 16)}<span>Añadir señal</span></button>
           <span class="muted small">Los cambios se guardan automáticamente. Al renombrar una señal se actualizan las reglas que la usan.</span>
@@ -170,8 +262,13 @@ export function renderSignals(app: App): HTMLElement {
       </div>`;
 
     qs(body, '[data-act="add"]').addEventListener('click', add);
+    qs(body, '[data-act="clear-filters"]').addEventListener('click', () => {
+      clearFilters();
+      qInput.focus();
+    });
     body.querySelectorAll<HTMLTableRowElement>('tr[data-i]').forEach((tr) => bindRow(tr));
     refreshValidation();
+    applyFilters();
   };
 
   const bindRow = (tr: HTMLTableRowElement) => {
@@ -210,6 +307,7 @@ export function renderSignals(app: App): HTMLElement {
         delete s.inductivoActivo;
         delete s.inductivoReposo;
       }
+      keepVisible = i;
       commit();
       draw();
     });
@@ -242,6 +340,11 @@ export function renderSignals(app: App): HTMLElement {
   };
 
   const add = () => {
+    // Con filtros activos la fila nueva podría quedar oculta: se quitan.
+    filters.q = '';
+    filters.type = 'all';
+    filters.unused = false;
+    keepVisible = null;
     p.signals.push({ name: '', type: 'Sensor', initial: 0, description: '' });
     commit();
     draw();
@@ -260,6 +363,46 @@ export function renderSignals(app: App): HTMLElement {
 
   qs(page, '[data-act="add"]').addEventListener('click', add);
   qs(page, '[data-act="next"]').addEventListener('click', () => app.go('logic'));
+
+  // ---- Filtros -------------------------------------------------------------
+  qInput.addEventListener('input', () => {
+    filters.q = qInput.value;
+    keepVisible = null;
+    applyFilters();
+  });
+  qInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && qInput.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      filters.q = '';
+      applyFilters();
+    }
+  });
+  qs(filterBar, '[data-act="clear-q"]').addEventListener('click', () => {
+    filters.q = '';
+    applyFilters();
+    qInput.focus();
+  });
+  unusedInput.addEventListener('change', () => {
+    filters.unused = unusedInput.checked;
+    keepVisible = null;
+    applyFilters();
+  });
+  const pickType = (t: TypeFilter) => {
+    // Pulsar el filtro activo lo quita.
+    filters.type = filters.type === t && t !== 'all' ? 'all' : t;
+    keepVisible = null;
+    applyFilters();
+  };
+  filterBar.addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-type]')?.dataset.type;
+    if (t) pickType(t as TypeFilter);
+  });
+  stats.addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-type]')?.dataset.type;
+    if (t) pickType(t as TypeFilter);
+  });
+
   draw();
   return page;
 }
