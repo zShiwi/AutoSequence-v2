@@ -2410,6 +2410,68 @@ select.input {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.tag3d--stop {
+  width: 172px;
+}
+
+.tag3d__station {
+  font-weight: 600 !important;
+}
+
+.tag3d__station.is-on {
+  color: var(--warn) !important;
+}
+
+.tag3d__station.is-done {
+  color: var(--ok) !important;
+}
+
+.tag3d--stop .tag3d__dot {
+  grid-row: 1 / span 4;
+  align-self: start;
+  margin-top: 4px;
+}
+
+.tag3d.is-moving .tag3d__dot {
+  background: var(--accent);
+}
+
+.tag3d__pres {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tag3d__pres i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+}
+
+.tag3d__pres.is-on i {
+  background: #ffc400;
+  border-color: #c99a00;
+}
+
+.tag3d--station {
+  min-width: 190px;
+}
+
+.tag3d--entry {
+  border-color: #c99a00;
+  background: color-mix(in srgb, #ffc400 18%, var(--surface));
+}
+
+.tag3d--entry .tag3d__dot {
+  background: #ffc400;
+}
+
+.pl-entry circle {
+  fill: #ffc400;
+  stroke: #c99a00;
+}
+
 .tag3d--sensor.is-on {
   border-color: var(--t-in);
 }

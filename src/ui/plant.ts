@@ -20,6 +20,7 @@ import {
   defaultLayout,
   liftEnd,
   loopLength,
+  palletEntry,
   motorEnd,
   pointAt,
   sensorS,
@@ -42,6 +43,7 @@ const ui = {
 };
 
 const SPEEDS = [1, 2, 5, 10];
+const palletCount = (pl: Plant) => (pl.pending ? `${pl.pallets.length}+${pl.pending}` : String(pl.pallets.length));
 const fmtTime = (ms: number) => {
   const s = Math.floor(ms / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -74,8 +76,9 @@ export function renderPlant(app: App): HTMLElement {
   if (!ui.plant && !errors.length) ui.plant = new Plant(layout, signals, rules);
   const plant = ui.plant;
   if (plant) {
-    while (plant.pallets.length < layout.pallets && plant.addPallet());
-    while (plant.pallets.length > layout.pallets && plant.removePallet());
+    const total = () => plant.pallets.length + plant.pending;
+    while (total() < layout.pallets && plant.addPallet());
+    while (total() > layout.pallets && plant.removePallet());
   }
   const use3d = ui.view === '3d' && !!plant;
 
@@ -91,7 +94,7 @@ export function renderPlant(app: App): HTMLElement {
         <div class="stepper" role="group" aria-label="Paletas en el lazo">
           <span class="stepper__label">Paletas</span>
           <button class="stepper__btn" data-pl="pminus" aria-label="Quitar una paleta"${plant ? '' : ' disabled'}>−</button>
-          <output class="stepper__val mono" data-slot="npallets">${plant ? plant.pallets.length : layout.pallets}</output>
+          <output class="stepper__val mono" data-slot="npallets">${plant ? palletCount(plant) : layout.pallets}</output>
           <button class="stepper__btn" data-pl="pplus" aria-label="Añadir una paleta"${plant ? '' : ' disabled'}>+</button>
           <span class="stepper__max muted small">máx. ${plant ? plant.capacity() : '—'}</span>
         </div>
@@ -186,14 +189,20 @@ export function renderPlant(app: App): HTMLElement {
     } else if ((act === 'pplus' || act === 'pminus') && plant) {
       const ok = act === 'pplus' ? plant.addPallet() : plant.removePallet();
       if (!ok) {
-        toast(act === 'pplus' ? `No cabe otra paleta: el lazo admite como mucho ${plant.capacity()}.` : 'No quedan paletas.', 'warn');
+        toast(
+          act === 'pplus'
+            ? `Ya hay el máximo de paletas (${plant.capacity()}): no caben más sin meterlas dentro de una zona.`
+            : 'Ahora no hay ninguna paleta en la cola de entrada para retirar. Espera a que llegue alguna.',
+          'warn',
+        );
         return;
       }
-      layout.pallets = plant.pallets.length;
+      layout.pallets = plant.pallets.length + plant.pending;
+      if (act === 'pplus' && plant.pending) toast('La paleta entrará por el punto de entrada en cuanto haya hueco.', 'info', 1800);
       commit();
-      qs(root, '[data-slot="npallets"]').textContent = String(plant.pallets.length);
+      qs(root, '[data-slot="npallets"]').textContent = palletCount(plant);
       const dims = root.querySelector<HTMLInputElement>('.plant-editor input[name="pallets"]');
-      if (dims) dims.value = String(plant.pallets.length);
+      if (dims) dims.value = String(layout.pallets);
       drawPanels(true);
     } else if (sp) {
       ui.speed = Number(sp);
@@ -277,12 +286,14 @@ export function renderPlant(app: App): HTMLElement {
         })
         .join('')}</div>`,
     );
+    const cnt = root.querySelector('[data-slot="npallets"]');
+    if (cnt && cnt.textContent !== palletCount(plant)) cnt.textContent = palletCount(plant);
     const prod = root.querySelector('[data-slot="prod"]');
     if (prod) {
       const cyc = plant.stationCycles();
       prod.innerHTML = `<dl class="plant-stats">
         <div><dt>Motor</dt><dd class="${plant.motorOn() ? 'ok' : 'bad'}">${plant.motorOn() ? 'En marcha' : 'Parado'}</dd></div>
-        <div><dt>Paletas en el lazo</dt><dd>${plant.pallets.length} de ${plant.capacity()} posibles</dd></div>
+        <div><dt>Paletas en el lazo</dt><dd>${plant.pallets.length} de ${plant.capacity()} posibles${plant.pending ? ` · ${plant.pending} esperando entrar` : ''}</dd></div>
         <div><dt>Paletas paradas</dt><dd>${plant.pallets.filter((x) => !x.moving).length}</dd></div>
         ${cyc.map((c) => `<div><dt>${esc(c.label)}</dt><dd>${c.cycles} ciclos · ${c.perMin.toFixed(1)}/min</dd></div>`).join('')}
       </dl>`;
@@ -776,6 +787,15 @@ function buildScene(layout: ConveyorLayout, signals: Signal[]): Scene {
     }
   });
 
+  const entry = palletEntry(layout);
+  if (entry) {
+    const { pt, nx, ny } = outward(entry.s - layout.palletLength / 2);
+    const ex = X(pt.x) - nx * (BW / 2 + 14);
+    const ey = Y(pt.y) - ny * (BW / 2 + 14);
+    out.push(
+      `<g class="pl-entry"><title>Las paletas nuevas entran siempre por aquí</title><circle cx="${r1(ex)}" cy="${r1(ey)}" r="4"/><text class="pl-label pl-label--small" x="${r1(ex)}" y="${r1(ey - ny * 14 + 3)}" text-anchor="middle">Entrada</text></g>`,
+    );
+  }
   out.push('<g data-pallets></g></svg>');
 
   // ---- Actualización por fotograma ----------------------------------------

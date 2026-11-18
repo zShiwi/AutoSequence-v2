@@ -101,6 +101,36 @@ export function sensorS(l: ConveyorLayout, sensor: LayoutSensor): number | null 
   return wrap(stopS(l, stop) + sensor.offset, loopLength(l));
 }
 
+/**
+ * Punto de entrada de paletas: siempre el mismo, al principio de la cola del
+ * pre-tope que va antes de la carga (o del pre-tope con más sitio). Las paletas
+ * nuevas entran ahí y avanzan hasta acumularse; así nunca aparecen dentro de
+ * una zona (entre un pre-tope y su tope, o antes de un sensor de paso).
+ */
+export function palletEntry(l: ConveyorLayout): { stop: string; stopS: number; s: number; slots: number } | null {
+  const pitch = l.palletLength + l.palletGap;
+  const L = loopLength(l);
+  const stops = l.stops.map((t) => ({ c: t.cylinder, s: stopS(l, t) })).sort((a, b) => a.s - b.s);
+  if (!stops.length) return null;
+  const info = stops.map((t, i) => {
+    const prev = stops[(i - 1 + stops.length) % stops.length];
+    const upstream = stops.length === 1 ? L : ahead(prev.s, t.s, L);
+    const after = l.sensors.filter((x) => x.ref === prev.c && x.offset > 0).reduce((m, x) => Math.max(m, x.offset), 0);
+    return { stop: t.c, stopS: t.s, prev: prev.c, room: upstream - after - pitch };
+  });
+  const withStation = new Set(l.stations.map((s) => s.stop));
+  const load = l.stations.find((s) => s.action === 'load');
+  const loadPrev = load ? info.find((x) => x.stop === load.stop)?.prev : undefined;
+  const byRoom = (list: typeof info) => [...list].sort((a, b) => b.room - a.room)[0];
+  const pick =
+    info.find((q) => q.stop === loadPrev && !withStation.has(q.stop)) ??
+    byRoom(info.filter((q) => !withStation.has(q.stop))) ??
+    byRoom(info);
+  if (!pick || pick.room < l.palletLength) return null;
+  const slots = Math.floor((pick.room - l.palletLength) / pitch) + 1;
+  return { stop: pick.stop, stopS: pick.stopS, slots, s: wrap(pick.stopS - (slots - 1) * pitch, L) };
+}
+
 /** El sensor de presencia está en el propio tope, justo antes del punto de parada. */
 export const PRESENCE_BEFORE_STOP = 30;
 

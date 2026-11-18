@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { acu4Blocks, acu4Signals } from '../src/data/acu4';
 import { Plant } from '../src/plant/engine';
-import { acu4Layout, ahead, defaultLayout, loopLength, pointAt, sOnLine, sensorS, validateLayout } from '../src/plant/layout';
+import { acu4Layout, ahead, defaultLayout, loopLength, palletEntry, pointAt, sOnLine, sensorS, stopS, validateLayout } from '../src/plant/layout';
 import type { ConveyorLayout } from '../src/types';
 
 const signals = acu4Signals();
@@ -98,24 +98,73 @@ describe('Planta ACU 4 topes + PLC', () => {
 });
 
 describe('Paletas en marcha', () => {
-  it('se añaden en el hueco más grande sin solaparse y se quitan', () => {
+  it('entran siempre por el mismo punto (cola de la pre-carga), esperan hueco y no se solapan', () => {
     const plant = new Plant(acu4Layout(), signals, rules);
-    plant.step(20000);
-    const cap = plant.capacity();
-    expect(cap).toBe(Math.floor(plant.L / (400 + 20)));
-    let added = 0;
-    while (plant.addPallet()) added++;
-    expect(plant.pallets.length).toBeGreaterThan(20);
-    expect(plant.pallets.length).toBeLessThanOrEqual(cap);
+    const l = plant.layout;
+    const entry = palletEntry(l)!;
+    expect(entry.stop).toBe('C01'); // pre-tope antes de la carga
+    const c01 = stopS(l, l.stops.find((t) => t.cylinder === 'C01')!);
+    // Al arrancar, todas acumuladas en la cola de C01.
+    plant.pallets.forEach((p) => expect(ahead(p.front - 1, c01, plant.L)).toBeLessThan(7 * 420 + 2));
+    const before = new Set(plant.pallets.map((p) => p.id));
+    expect(plant.addPallet()).toBe(true);
+    expect(plant.addPallet()).toBe(true);
+    // La primera entra ya por el punto de entrada; la segunda espera hueco.
+    const fresh = plant.pallets.filter((p) => !before.has(p.id));
+    expect(fresh.map((p) => Math.round(p.front))).toEqual([Math.round(entry.s)]);
+    expect(plant.pending).toBe(1);
+    plant.step(5000);
+    expect(plant.pending).toBe(0);
+    while (plant.addPallet());
+    expect(plant.pallets.length + plant.pending).toBe(plant.capacity());
+    plant.step(120000);
     const sorted = [...plant.pallets].sort((a, b) => a.front - b.front);
     sorted.forEach((p, i) => {
       const next = sorted[(i + 1) % sorted.length];
       expect(ahead(p.front, next.front, plant.L) - 400).toBeGreaterThanOrEqual(20 - 1e-6);
     });
-    plant.step(60000);
     expect(plant.sim.warnings).toEqual([]);
+  });
+
+  it('solo se retiran paletas de la cola de entrada', () => {
+    const plant = new Plant(acu4Layout(), signals, rules);
+    const n = plant.pallets.length;
     expect(plant.removePallet()).toBe(true);
-    expect(plant.pallets.length).toBe(7 + added - 1);
+    expect(plant.pallets.length).toBe(n - 1);
+  });
+
+  it('un pre-tope nunca abre con una paleta de camino a su tope (7 a máximo paletas, 5 min)', () => {
+    const l = acu4Layout();
+    const pairs = [
+      ['C01', 'C02'],
+      ['C03', 'C04'],
+    ].map(([pre, stop]) => ({
+      pre,
+      a: stopS(l, l.stops.find((t) => t.cylinder === pre)!),
+      b: stopS(l, l.stops.find((t) => t.cylinder === stop)!),
+    }));
+    [7, 12, 99].forEach((n) => {
+      const plant = new Plant(l, signals, rules);
+      while (plant.pallets.length < n && plant.addPallet());
+      const prev: Record<string, number> = {};
+      const bad: string[] = [];
+      for (let t = 0; t < 300000; t += 20) {
+        plant.step(20);
+        pairs.forEach(({ pre, a, b }) => {
+          const v = plant.sim.states[pre];
+          if (v === 1 && prev[pre] === 0) {
+            const span = ahead(a, b, plant.L);
+            const transit = plant.pallets.filter((p) => {
+              const d = ahead(a, p.front, plant.L);
+              return d > 5 && d < span - 1;
+            });
+            if (transit.length) bad.push(`${pre} t=${(plant.time / 1000).toFixed(1)} s con ${plant.pallets.length} paletas`);
+          }
+          prev[pre] = v;
+        });
+      }
+      expect(bad, `paletas=${n}`).toEqual([]);
+    });
   });
 });
 

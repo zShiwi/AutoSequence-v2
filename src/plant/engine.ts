@@ -17,7 +17,7 @@
 
 import type { ConveyorLayout, Rule, Signal, SignalLevel } from '../types';
 import { Simulator } from '../plc/simulation';
-import { PRESENCE_BEFORE_STOP, ahead, loopLength, sensorS, stopS, wrap } from './layout';
+import { PRESENCE_BEFORE_STOP, ahead, loopLength, palletEntry, sensorS, stopS, wrap } from './layout';
 
 export interface Pallet {
   id: number;
@@ -69,6 +69,10 @@ export class Plant {
   /** Señales que gobierna la planta (no se pueden accionar a mano). */
   readonly driven = new Set<string>();
   log: PlantLogEntry[] = [];
+  /** Punto fijo por donde entran las paletas nuevas. */
+  readonly entry: ReturnType<typeof palletEntry> = null;
+  /** Paletas pedidas que esperan hueco en el punto de entrada. */
+  pending = 0;
 
   private readonly stopPos: { cylinder: string; s: number; travelMs: number; active?: string; rest?: string }[];
   private readonly points: { signal: string; s: number }[];
@@ -114,11 +118,19 @@ export class Plant {
       st.nokSensors.forEach((s) => this.driven.add(s));
     });
 
-    // Paletas repartidas por el lazo.
+    // Paletas acumuladas en las colas de los pre-topes, nunca a medio camino
+    // dentro de una zona (eso desajustaría las marcas de tránsito del PLC).
+    this.entry = palletEntry(layout);
     const n = Math.max(0, Math.floor(layout.pallets));
-    for (let i = 0; i < n; i++) {
-      this.pallets.push({ id: i + 1, front: wrap((i * this.L) / n + 150, this.L), part: false, moving: false });
-    }
+    if (this.entry) {
+      // Al arrancar, acumuladas en la cola de entrada; las que no caben, en espera.
+      const pitch = layout.palletLength + layout.palletGap;
+      const placed = Math.min(n, this.entry.slots, this.capacity());
+      for (let k = 0; k < placed; k++) {
+        this.pallets.push({ id: k + 1, front: wrap(this.entry.stopS - k * pitch, this.L), part: false, moving: false });
+      }
+      this.pending = Math.min(n, this.capacity()) - placed;
+    } else for (let i = 0; i < n && this.addPallet(); i++);
     this.sync();
     this.log = [];
   }
@@ -132,22 +144,74 @@ export class Plant {
     this.record(this.sim.apply([{ signal, value }], 'Manual'));
   }
 
-  /** Paletas que caben en el lazo como mucho. */
+  /** Paletas que caben como mucho sin dejar ninguna dentro de una zona. */
   capacity(): number {
-    return Math.floor(this.L / (this.layout.palletLength + this.layout.palletGap));
+    const { palletLength: len, palletGap: gap } = this.layout;
+    if (!this.stopPos.length) return Math.floor(this.L / (len + gap));
+    return this.queuePool().reduce((n, q) => n + Math.floor((q.room - len) / (len + gap)) + 1, 0);
   }
 
   /**
-   * Añade una paleta en el hueco libre más grande, sin parar la simulación.
-   * Devuelve false si no cabe.
+   * Pide una paleta más. Entra siempre por el mismo punto (el principio de la
+   * cola de entrada); si ahora está ocupado, espera y entra en cuanto haya
+   * hueco. Devuelve false si ya se ha llegado al máximo.
    */
   addPallet(): boolean {
-    const { palletLength: len, palletGap: gap } = this.layout;
-    const id = this.pallets.reduce((m, p) => Math.max(m, p.id), 0) + 1;
-    if (!this.pallets.length) {
-      this.pallets.push({ id, front: wrap(len + 150, this.L), part: false, moving: false });
+    if (!this.entry) {
+      const front = this.largestGapSlot();
+      if (front === null) return false;
+      this.pallets.push({ id: this.nextId(), front, part: false, moving: false });
       return true;
     }
+    if (this.pallets.length + this.pending >= this.capacity()) return false;
+    this.pending++;
+    this.feed();
+    return true;
+  }
+
+  private nextId(): number {
+    return this.pallets.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+  }
+
+  /** Mete una paleta en espera si el punto de entrada está libre. */
+  private feed(): void {
+    if (!this.pending || !this.entry || !this.free(this.entry.s)) return;
+    this.pallets.push({ id: this.nextId(), front: this.entry.s, part: false, moving: false });
+    this.pending--;
+  }
+
+  /** ¿Cabe una paleta con el frente en f sin tocar a ninguna otra? */
+  private free(f: number): boolean {
+    const need = this.layout.palletLength + this.layout.palletGap - 1e-6;
+    return this.pallets.every((p) => Math.min(ahead(p.front, f, this.L), ahead(f, p.front, this.L)) >= need);
+  }
+
+  /** Colas donde se pueden dejar paletas: los pre-topes y el sitio que tienen detrás. */
+  private queuePool(): { t: { s: number; cylinder: string }; room: number }[] {
+    const { palletLength: len, palletGap: gap } = this.layout;
+    const pitch = len + gap;
+    const stops = [...this.stopPos].sort((a, b) => a.s - b.s);
+    if (!stops.length) return [];
+    const withStation = new Set(this.stations.map((s) => s.stop));
+    const queues = stops
+      .map((t, i) => {
+        const prev = stops[(i - 1 + stops.length) % stops.length];
+        const upstream = stops.length === 1 ? this.L : ahead(prev.s, t.s, this.L);
+        // No invadir la zona del tope anterior: hasta su último sensor de paso.
+        const after = this.layout.sensors
+          .filter((x) => x.ref === prev.cylinder && x.offset > 0)
+          .reduce((m, x) => Math.max(m, x.offset), 0);
+        return { t, room: upstream - after - pitch, station: withStation.has(t.cylinder) };
+      })
+      .filter((q) => q.room >= len);
+    const pre = queues.filter((q) => !q.station);
+    return pre.length ? pre : queues;
+  }
+
+  /** Último recurso: el centro del hueco libre más grande. */
+  private largestGapSlot(): number | null {
+    const { palletLength: len, palletGap: gap } = this.layout;
+    if (!this.pallets.length) return wrap(len + 150, this.L);
     const sorted = [...this.pallets].sort((a, b) => a.front - b.front);
     let best = -1;
     let bestFree = -Infinity;
@@ -159,18 +223,34 @@ export class Plant {
         best = i;
       }
     });
-    if (bestFree < len + 2 * gap) return false;
-    const behind = sorted[best];
-    const front = wrap(behind.front + gap + len + (bestFree - len - 2 * gap) / 2, this.L);
-    this.pallets.push({ id, front, part: false, moving: false });
-    return true;
+    if (bestFree < len + 2 * gap) return null;
+    return wrap(sorted[best].front + gap + len + (bestFree - len - 2 * gap) / 2, this.L);
   }
 
-  /** Quita la última paleta añadida. */
+  /**
+   * Retira una paleta: primero las que esperan para entrar; si no, la última
+   * de la cola de entrada (nunca una que esté dentro de una zona, el PLC se
+   * quedaría esperándola). Devuelve false si ahora no hay ninguna que retirar.
+   */
   removePallet(): boolean {
-    if (!this.pallets.length) return false;
-    const last = this.pallets.reduce((a, b) => (b.id > a.id ? b : a));
-    this.pallets = this.pallets.filter((p) => p !== last);
+    if (this.pending) {
+      this.pending--;
+      return true;
+    }
+    if (!this.entry) {
+      if (!this.pallets.length) return false;
+      const last = this.pallets.reduce((a, b) => (b.id > a.id ? b : a));
+      this.pallets = this.pallets.filter((p) => p !== last);
+      return true;
+    }
+    const pitch = this.layout.palletLength + this.layout.palletGap;
+    const span = (this.entry.slots - 1) * pitch + 1;
+    const inQueue = this.pallets
+      .map((p) => ({ p, d: ahead(p.front, this.entry!.stopS + 0.5, this.L) - 0.5 }))
+      .filter((x) => x.d <= span)
+      .sort((a, b) => b.d - a.d);
+    if (!inQueue.length) return false;
+    this.pallets = this.pallets.filter((p) => p !== inQueue[0].p);
     return true;
   }
 
@@ -195,6 +275,7 @@ export class Plant {
       this.moveCylinders(h);
       this.movePallets(h);
       this.runStations(h);
+      this.feed();
       this.sync();
     }
   }

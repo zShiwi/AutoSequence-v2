@@ -21,7 +21,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ConveyorLayout, Signal } from '../types';
 import type { Plant } from './engine';
-import { PRESENCE_BEFORE_STOP, loopLength, motorEnd, pointAt, sensorS, stopS } from './layout';
+import { PRESENCE_BEFORE_STOP, loopLength, motorEnd, palletEntry, pointAt, sensorS, stopS } from './layout';
 
 export interface PlantView {
   el: HTMLElement;
@@ -396,13 +396,13 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     active?: string;
     rest?: string;
     label: HTMLElement;
-    lastPos: number;
+    presence?: string;
   }
   const stops: StopObj[] = [];
-  const sensorObjs: { signal: string; led: THREE.Mesh; color: number; label: HTMLElement }[] = [];
+  const sensorObjs: { signal: string; led: THREE.Mesh; color: number; label: HTMLElement | null }[] = [];
 
   /** Sensor inductivo M18 en escuadra sobre la guía delantera, mirando a la paleta. */
-  const addSensor = (smm: number, signal: string, color: number, sub: string, small = false) => {
+  const addSensor = (smm: number, signal: string, color: number, sub: string | null) => {
     const p = at(smm);
     const z0 = pw / 2 + 0.035;
     const c = world(p, 0.022, z0 + 0.035);
@@ -417,10 +417,19 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     const bracket = box(0.03, 0.03, 0.005, steel);
     bracket.position.copy(world(p, 0.022, z0 + 0.03));
     conveyor.add(body, face, l, bracket);
-    const label = tag(named(signal, sub), small ? 'tag3d--small' : 'tag3d--sensor', conveyor, world(p, small ? 0.08 : 0.16, z0 + 0.1));
+    // La presencia del tope no lleva etiqueta propia: va en la del tope.
+    const label = sub === null ? null : tag(named(signal, sub), 'tag3d--sensor', conveyor, world(p, 0.16, z0 + 0.1));
     sensorObjs.push({ signal, led: l, color, label });
   };
 
+  // Etiquetas de topes cercanos a distinta altura para que no se pisen.
+  const placedLabels: { x: number; y: number; d: number }[] = [];
+  const labelDepth = (x: number, y: number) => {
+    let d = 0.32;
+    while (placedLabels.some((q) => Math.abs(q.x - x) < 1.4 && Math.abs(q.y - y) < 0.2 && Math.abs(q.d - d) < 0.4)) d += 0.55;
+    placedLabels.push({ x, y, d });
+    return d;
+  };
   layout.stops.forEach((t) => {
     const smm = stopS(layout, t);
     const p = at(smm);
@@ -448,7 +457,16 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     g.add(cross, body, cap, rod, head, lamp, ledA, ledR);
     conveyor.add(g);
     const sig = desc.get(t.cylinder);
-    const label = tag(named(t.cylinder, 'tope cerrado'), 'tag3d--stop', conveyor, world(p, 0.32, pw / 2 + 0.2));
+    const label = tag(
+      `<i class="tag3d__dot"></i><b>${esc(t.cylinder)}</b><small data-st>tope cerrado</small>` +
+        (t.presence ? `<small class="tag3d__pres" data-pres><i></i>${esc(t.presence)} · presencia</small>` : '') +
+        (layout.stations.some((x) => x.stop === t.cylinder)
+          ? `<small class="tag3d__station" data-station>${esc(layout.stations.find((x) => x.stop === t.cylinder)!.label)}: esperando</small>`
+          : ''),
+      'tag3d--stop',
+      conveyor,
+      world(p, labelDepth(p.x, p.y), pw / 2 + 0.2),
+    );
     label.title = sig?.description ?? '';
     stops.push({
       cylinder: t.cylinder,
@@ -459,9 +477,9 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
       active: sig?.inductivoActivo || undefined,
       rest: sig?.inductivoReposo || undefined,
       label,
-      lastPos: 0,
+      presence: t.presence,
     });
-    if (t.presence) addSensor(smm - PRESENCE_BEFORE_STOP, t.presence, 0xffc400, 'presencia', true);
+    if (t.presence) addSensor(smm - PRESENCE_BEFORE_STOP, t.presence, 0xffc400, null);
   });
 
   layout.sensors.forEach((x) => {
@@ -471,18 +489,21 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     addSensor(smm, x.signal, x.role === 'acumulacion' ? 0xff7a00 : 0x22d36b, role);
   });
 
-  // ---- Estaciones (solo su estado, en el lado donde se trabaja) -----------------
-  const stationTags: { stop: string; tag: HTMLElement; signals: string }[] = [];
-  layout.stations.forEach((st) => {
-    const t = layout.stops.find((x) => x.cylinder === st.stop);
-    if (!t) return;
-    const p = at(stopS(layout, t) - layout.palletLength / 2);
-    stationTags.push({
-      stop: st.stop,
-      tag: tag(named(st.label, 'Esperando paleta'), 'tag3d--station', conveyor, world(p, 0.5, 0)),
-      signals: [st.release, ...st.okSensors].filter(Boolean).join(' · '),
-    });
-  });
+  // ---- Estaciones: su estado va en la etiqueta de su tope ----------------------
+  const stationTags = layout.stations
+    .map((st) => ({ stop: st.stop, label: st.label, tag: stops.find((t) => t.cylinder === st.stop)?.label }))
+    .filter((x): x is { stop: string; label: string; tag: HTMLElement } => !!x.tag);
+
+  // ---- Punto de entrada de paletas --------------------------------------------
+  const entry = palletEntry(layout);
+  if (entry) {
+    const p = at(entry.s - layout.palletLength / 2);
+    const mark = new THREE.Mesh(new THREE.BoxGeometry(plen * 0.95, 0.006, 0.05), arrowMat);
+    orient(mark, p);
+    mark.position.copy(world(p, 0.003, -(pw / 2 + 0.06)));
+    conveyor.add(mark);
+    tag(named('Entrada de paletas', `cola de ${entry.stop}`), 'tag3d--entry', conveyor, world(p, 0.25, -(pw / 2 + 0.25)));
+  }
 
   // ---- Paletas -----------------------------------------------------------------
   interface PalletObj {
@@ -595,11 +616,11 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
 
     stationTags.forEach((r) => {
       const sp = plant.stationProgress(r.stop);
-      const state = !sp ? 'Esperando paleta' : sp.progress >= 1 ? `Terminado${r.signals ? ` · ${r.signals}` : ''}` : `Trabajando ${Math.round(sp.progress * 100)} %`;
-      const small = r.tag.querySelector('small');
-      if (small && small.textContent !== state) small.textContent = state;
-      r.tag.classList.toggle('is-on', !!sp && sp.progress < 1);
-      r.tag.classList.toggle('is-done', !!sp && sp.progress >= 1);
+      const state = `${r.label}: ${!sp ? 'esperando' : sp.progress >= 1 ? 'terminado' : `trabajando ${Math.round(sp.progress * 100)} %`}`;
+      const line = r.tag.querySelector<HTMLElement>('[data-station]')!;
+      if (line.textContent !== state) line.textContent = state;
+      line.classList.toggle('is-on', !!sp && sp.progress < 1);
+      line.classList.toggle('is-done', !!sp && sp.progress >= 1);
     });
 
     const alive = new Set<number>();
@@ -638,17 +659,22 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
       }
       setLed(t.ledActive, t.active && plant.sim.states[t.active] === 1 ? 0xffc400 : null);
       setLed(t.ledRest, t.rest && plant.sim.states[t.rest] === 1 ? 0xffc400 : null);
-      t.label.classList.toggle('is-open', pos >= 1);
-      t.label.classList.toggle('is-bad', pos <= 0);
-      const txt = pos >= 1 ? 'tope abierto' : pos <= 0 ? 'tope cerrado' : pos > t.lastPos ? 'abriendo…' : 'cerrando…';
-      t.lastPos = pos;
-      const small = t.label.querySelector('small');
-      if (small && small.textContent !== txt) small.textContent = txt;
+      // El estado sale de la orden del PLC y de la posición real del cilindro.
+      const cmd = plant.sim.states[t.cylinder] === 1;
+      const txt = cmd ? (pos >= 1 ? 'tope abierto' : 'abriendo…') : pos <= 0 ? 'tope cerrado' : 'cerrando…';
+      const cls = pos >= 1 ? 'is-open' : pos <= 0 ? 'is-bad' : 'is-moving';
+      if (t.label.dataset.state !== cls + txt) {
+        t.label.dataset.state = cls + txt;
+        t.label.classList.remove('is-open', 'is-bad', 'is-moving');
+        t.label.classList.add(cls);
+        t.label.querySelector('[data-st]')!.textContent = txt;
+      }
+      if (t.presence) t.label.querySelector('[data-pres]')!.classList.toggle('is-on', plant.sim.states[t.presence] === 1);
     });
     sensorObjs.forEach((s) => {
       const on = plant.sim.states[s.signal] === 1;
       setLed(s.led, on ? s.color : null);
-      s.label.classList.toggle('is-on', on);
+      s.label?.classList.toggle('is-on', on);
     });
 
     controls.update();

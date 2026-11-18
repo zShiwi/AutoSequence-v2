@@ -11,8 +11,10 @@ test('ACU 4 topes: transportador 3D con nombres, paletas en marcha y reglas', as
   // Añadir paletas sin reiniciar la simulación.
   await page.locator('[data-pl="pplus"]').click();
   await page.locator('[data-pl="pplus"]').click();
-  await expect(page.locator('[data-slot="npallets"]')).toHaveText('9');
+  // Entran por el punto de entrada; la segunda espera a que haya hueco.
+  await expect(page.locator('[data-slot="npallets"]')).toHaveText('9', { timeout: 15_000 });
   await expect(page.locator('.tag3d--pallet')).toHaveCount(9);
+  await expect(page.locator('.tag3d--entry')).toContainText('Entrada de paletas');
   await page.locator('[data-pl="pminus"]').click();
   await expect(page.locator('.tag3d--pallet')).toHaveCount(8);
   // Ocultar nombres.
