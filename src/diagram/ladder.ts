@@ -140,5 +140,5 @@ export function renderLadder(rungs: LadderRung[], symbols: SymbolEntry[]): { svg
 
 /** Versión autónoma (colores fijos) para descargar como archivo .svg. */
 export function standaloneSvg(svg: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${svg.replace(/var\(--[a-z-]+, ([^)]+)\)/g, '$1')}`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${svg.replace(/var\(--[\w-]+, ([^)]+)\)/g, '$1')}`;
 }
