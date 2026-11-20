@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { acu4Blocks, acu4Signals } from '../src/data/acu4';
-import { Plant } from '../src/plant/engine';
+import { Plant, waitGroupText } from '../src/plant/engine';
 import { acu4Layout, ahead, defaultLayout, loopLength, palletEntry, pointAt, sOnLine, sensorS, stopS, validateLayout } from '../src/plant/layout';
 import type { ConveyorLayout } from '../src/types';
 
@@ -193,7 +193,7 @@ describe('Acumulación máxima', () => {
     while (plant.pallets.length + plant.pending < 12 && plant.addPallet());
     plant.step(300000);
     expect(plant.blockedFor()).toBeGreaterThan(30);
-    const why = Object.fromEntries(plant.waitingStops().map((w) => [w.cylinder, w.missing]));
+    const why = Object.fromEntries(plant.waitingStops().map((w) => [w.cylinder, w.missing.map(waitGroupText)]));
     expect(why.C04).toEqual(['PX08 = 0']);
     expect(why.C02).toEqual(['PX04 = 0']);
   });

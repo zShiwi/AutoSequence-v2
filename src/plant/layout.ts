@@ -131,6 +131,43 @@ export function palletEntry(l: ConveyorLayout): { stop: string; stopS: number; s
   return { stop: pick.stop, stopS: pick.stopS, slots, s: wrap(pick.stopS - (slots - 1) * pitch, L) };
 }
 
+/**
+ * Colas donde se pueden dejar paletas: los pre-topes y el sitio que tienen
+ * detrás (hasta el último sensor de paso del tope anterior). Si ningún
+ * pre-tope tiene sitio, valen las colas de los topes con estación.
+ */
+export function queuePool(l: ConveyorLayout): { cylinder: string; s: number; room: number }[] {
+  const len = l.palletLength;
+  const pitch = len + l.palletGap;
+  const L = loopLength(l);
+  const stops = l.stops.map((t) => ({ cylinder: t.cylinder, s: stopS(l, t) })).sort((a, b) => a.s - b.s);
+  if (!stops.length) return [];
+  const withStation = new Set(l.stations.filter((st) => stops.some((t) => t.cylinder === st.stop)).map((st) => st.stop));
+  const queues = stops
+    .map((t, i) => {
+      const prev = stops[(i - 1 + stops.length) % stops.length];
+      const upstream = stops.length === 1 ? L : ahead(prev.s, t.s, L);
+      // No invadir la zona del tope anterior: hasta su último sensor de paso.
+      const after = l.sensors.filter((x) => x.ref === prev.cylinder && x.offset > 0).reduce((m, x) => Math.max(m, x.offset), 0);
+      return { cylinder: t.cylinder, s: t.s, room: upstream - after - pitch, station: withStation.has(t.cylinder) };
+    })
+    .filter((q) => q.room >= len);
+  const pre = queues.filter((q) => !q.station);
+  return (pre.length ? pre : queues).map(({ cylinder, s, room }) => ({ cylinder, s, room }));
+}
+
+/**
+ * Paletas que caben como mucho sin dejar ninguna dentro de una zona. Es la
+ * capacidad que usa la planta (`Plant.capacity()`) y la que se valida.
+ */
+export function layoutCapacity(l: ConveyorLayout): number {
+  const len = l.palletLength;
+  const pitch = len + l.palletGap;
+  if (!(pitch > 0) || !(len > 0)) return 0;
+  if (!l.stops.length) return Math.max(0, Math.floor(loopLength(l) / pitch));
+  return queuePool(l).reduce((n, q) => n + Math.floor((q.room - len) / pitch) + 1, 0);
+}
+
 /** El sensor de presencia está en el propio tope, justo antes del punto de parada. */
 export const PRESENCE_BEFORE_STOP = 30;
 
@@ -139,6 +176,8 @@ export const PRESENCE_BEFORE_STOP = 30;
 export interface LayoutIssue {
   level: 'error' | 'warn';
   text: string;
+  /** Campo del editor al que se refiere (para mostrar el aviso junto a él). */
+  field?: 'pallets';
 }
 
 export function validateLayout(l: ConveyorLayout, signals: Signal[]): LayoutIssue[] {
@@ -150,8 +189,26 @@ export function validateLayout(l: ConveyorLayout, signals: Signal[]): LayoutIssu
   };
   if (!(l.length > 0) || !(l.radius > 0)) issues.push({ level: 'error', text: 'La longitud y el radio deben ser mayores que 0.' });
   if (l.palletLength <= 0 || l.speed <= 0) issues.push({ level: 'error', text: 'La paleta y la velocidad deben ser mayores que 0.' });
-  const capacity = Math.floor(L / (l.palletLength + l.palletGap));
-  if (l.pallets > capacity) issues.push({ level: 'error', text: `Caben como mucho ${capacity} paletas en ${Math.round(L)} mm de lazo.` });
+  // La misma capacidad que usa la planta: si se configuran más paletas, las
+  // que sobran no llegan a entrar y hay que decirlo donde se configuran.
+  if (l.length > 0 && l.radius > 0 && l.palletLength > 0) {
+    const capacity = layoutCapacity(l);
+    const whole = Math.floor(L / (l.palletLength + l.palletGap));
+    const n = Math.max(0, Math.floor(l.pallets));
+    if (n > capacity) {
+      const extra = n - capacity;
+      const fit = capacity === 1 ? 'solo cabe 1' : capacity === 0 ? 'no cabe ninguna' : `solo caben ${capacity}`;
+      const why =
+        capacity < whole
+          ? ' sin dejar ninguna dentro de una zona (entre un tope y el siguiente sensor de paso). Reduce las paletas o deja más cola antes de los pre-topes.'
+          : ` en ${Math.round(L)} mm de lazo. Reduce las paletas o alarga el transportador.`;
+      issues.push({
+        level: 'warn',
+        field: 'pallets',
+        text: `Hay ${n} paletas configuradas y ${fit}${why} ${extra === 1 ? 'La que sobra no entrará' : `Las ${extra} que sobran no entrarán`} en el lazo.`,
+      });
+    }
+  }
   need(l.motor, 'Motor');
 
   const seen = new Set<string>();

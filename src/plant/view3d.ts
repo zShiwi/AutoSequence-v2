@@ -20,7 +20,7 @@ import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRe
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ConveyorLayout, Signal } from '../types';
-import type { Plant } from './engine';
+import { waitText, waitsOnOthers, type Plant } from './engine';
 import { PRESENCE_BEFORE_STOP, loopLength, motorEnd, palletEntry, pointAt, sensorS, stopS } from './layout';
 
 export interface PlantView {
@@ -59,6 +59,12 @@ export interface TagBox {
   dx: number;
   dy: number;
   visible: boolean;
+  /**
+   * Etiqueta secundaria (las de paleta): no se aparta; si no cabe en su sitio
+   * sin pisar a otra, se oculta (`crowded`) hasta que quede hueco.
+   */
+  optional?: boolean;
+  crowded?: boolean;
 }
 
 const overlaps = (a: TagBox, ax: number, ay: number, b: TagBox, gap: number) =>
@@ -68,7 +74,9 @@ const overlaps = (a: TagBox, ax: number, ay: number, b: TagBox, gap: number) =>
  * Coloca las etiquetas sin que se pisen ni se salgan del contenedor. Las
  * primeras de la lista tienen preferencia; las demás se apartan lo mínimo
  * (primero en vertical). Una etiqueta ya apartada se queda donde está mientras
- * siga libre, para que no baile de un fotograma a otro.
+ * siga libre, para que no baile de un fotograma a otro. Las opcionales van
+ * al final de la lista: se quedan sobre su objeto o no se muestran, de modo
+ * que entre varias muy juntas solo salen las que caben.
  */
 export function placeTags(boxes: TagBox[], width: number, height: number, gap = 3): void {
   const done: TagBox[] = [];
@@ -83,6 +91,14 @@ export function placeTags(boxes: TagBox[], width: number, height: number, gap = 
     const clampY = (y: number) => (b.h + 2 * pad > height ? y : Math.min(Math.max(y, b.h / 2 + pad), height - b.h / 2 - pad));
     const free = (x: number, y: number, g: number) => !done.some((d) => overlaps(b, x, y, d, g));
     const home = { x: clampX(b.x), y: clampY(b.y) };
+    if (b.optional) {
+      // Con histéresis: para reaparecer pide algo más de sitio que para seguir.
+      b.dx = home.x - b.x;
+      b.dy = home.y - b.y;
+      b.crowded = !free(home.x, home.y, b.crowded === false ? 0 : gap);
+      if (!b.crowded) done.push(b);
+      return;
+    }
     const prev = { x: clampX(b.x + b.dx), y: clampY(b.y + b.dy) };
     let pos: { x: number; y: number } | null = null;
     if (free(home.x, home.y, gap + 6)) pos = home;
@@ -418,25 +434,49 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   });
 
   // ---- Etiquetas -------------------------------------------------------------
-  const tagBoxes: (TagBox & { obj: CSS2DObject; el: HTMLElement; line: SVGLineElement })[] = [];
+  type LiveTag = TagBox & { obj: CSS2DObject; el: HTMLElement; line: SVGLineElement | null };
+  /** Etiquetas fijas (topes, sensores, motor…): tienen preferencia de sitio. */
+  const tagBoxes: LiveTag[] = [];
+  /** Etiquetas de paleta: se colocan después y solo si caben. */
+  const palletBoxes = new Map<number, LiveTag>();
   const leaders = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   leaders.setAttribute('class', 'plant3d__leaders');
   leaders.setAttribute('aria-hidden', 'true');
   labelRenderer.domElement.appendChild(leaders);
-  /** `spread`: la etiqueta se aparta de las demás si se pisan (las de paleta no). */
-  const tag = (html: string, cls: string, parent: THREE.Object3D, pos: THREE.Vector3, spread = true) => {
+  const tagObject = (html: string, cls: string, parent: THREE.Object3D, pos: THREE.Vector3) => {
     const div = document.createElement('div');
     div.className = `tag3d ${cls}`;
     div.innerHTML = html;
     const o = new CSS2DObject(div);
     o.position.copy(pos);
     parent.add(o);
-    if (spread) {
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      leaders.appendChild(line);
-      tagBoxes.push({ obj: o, el: div, line, x: 0, y: 0, w: 0, h: 0, dx: 0, dy: 0, visible: false });
-    }
-    return div;
+    return { obj: o, el: div, x: 0, y: 0, w: 0, h: 0, dx: 0, dy: 0, visible: false };
+  };
+  /** Etiqueta fija: se aparta de las demás si se pisan, con su línea guía. */
+  const tag = (html: string, cls: string, parent: THREE.Object3D, pos: THREE.Vector3) => {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    leaders.appendChild(line);
+    const t = { ...tagObject(html, cls, parent, pos), line };
+    tagBoxes.push(t);
+    return t;
+  };
+  /**
+   * Etiqueta de un elemento del lazo, separada `d` metros hacia fuera. En
+   * estrecho todo se ve más pequeño y la etiqueta taparía las paletas que
+   * pasan por delante: se separa algo más.
+   */
+  const COMPACT_EXTRA = 0.14;
+  const anchored: { obj: CSS2DObject; p: At; d: number; z: number }[] = [];
+  const lazoTag = (html: string, cls: string, p: At, d: number, z: number) => {
+    const t = tag(html, cls, conveyor, world(p, d, z));
+    anchored.push({ obj: t.obj, p, d, z });
+    return t.el;
+  };
+  let compactNow = false;
+  const setCompact = (on: boolean) => {
+    if (on === compactNow) return;
+    compactNow = on;
+    anchored.forEach((a) => a.obj.position.copy(world(a.p, a.d + (on ? COMPACT_EXTRA : 0), a.z)));
   };
   const named = (name: string, sub?: string) =>
     `<i class="tag3d__dot"></i><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}`;
@@ -472,7 +512,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
         'tag3d--motor',
         g,
         new THREE.Vector3(0, aerial ? -0.35 : 0.35, 0.1),
-      );
+      ).el;
     }
   }
 
@@ -493,7 +533,8 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
 
   // Etiquetas cercanas a distinta altura para que no se pisen.
   const placedLabels: { x: number; y: number; d: number }[] = [];
-  const labelDepth = (x: number, y: number, base = 0.32) => {
+  // Las bases dejan libre la franja por la que pasan las paletas con su número.
+  const labelDepth = (x: number, y: number, base = 0.48) => {
     let d = base;
     while (placedLabels.some((q) => Math.abs(q.x - x) < 1.05 && Math.abs(q.y - y) < 0.2 && Math.abs(q.d - d) < 0.36)) d += 0.4;
     placedLabels.push({ x, y, d });
@@ -516,7 +557,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     bracket.position.copy(world(p, 0.022, z0 + 0.03));
     conveyor.add(body, face, l, bracket);
     // La presencia del tope no lleva etiqueta propia: va en la del tope.
-    const label = sub === null ? null : tag(named(signal, sub), 'tag3d--sensor', conveyor, world(p, labelDepth(p.x, p.y, 0.16), z0 + 0.1));
+    const label = sub === null ? null : lazoTag(named(signal, sub), 'tag3d--sensor', p, labelDepth(p.x, p.y, 0.34), z0 + 0.1);
     sensorObjs.push({ signal, led: l, color, label });
   };
 
@@ -547,7 +588,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     g.add(cross, body, cap, rod, head, lamp, ledA, ledR);
     conveyor.add(g);
     const sig = desc.get(t.cylinder);
-    const label = tag(
+    const label = lazoTag(
       `<i class="tag3d__dot"></i><b>${esc(t.cylinder)}</b><small data-st>tope cerrado</small>` +
         (t.presence ? `<small class="tag3d__pres" data-pres><i></i>${esc(t.presence)} · presencia</small>` : '') +
         (layout.stations.some((x) => x.stop === t.cylinder)
@@ -555,8 +596,9 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
           : '') +
         `<small class="tag3d__why" data-why hidden></small>`,
       `tag3d--stop${layout.stations.some((x) => x.stop === t.cylinder) ? ' tag3d--stop-station' : ''}`,
-      conveyor,
-      world(p, labelDepth(p.x, p.y), pw / 2 + 0.2),
+      p,
+      labelDepth(p.x, p.y),
+      pw / 2 + 0.2,
     );
     label.title = sig?.description ?? '';
     stops.push({
@@ -593,11 +635,12 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     orient(mark, p);
     mark.position.copy(world(p, 0.003, -(pw / 2 + 0.06)));
     conveyor.add(mark);
-    tag(
+    lazoTag(
       `<i class="tag3d__dot"></i><b><span class="tag3d__long">Entrada de paletas</span><span class="tag3d__short">Entrada</span></b><small>${esc(`cola de ${entry.stop}`)}</small>`,
       'tag3d--entry',
-      conveyor,
-      world(p, labelDepth(p.x, p.y, 0.25), -(pw / 2 + 0.25)),
+      p,
+      labelDepth(p.x, p.y, 0.25),
+      -(pw / 2 + 0.25),
     );
   }
 
@@ -630,8 +673,11 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     g.add(plate, strip, fixture, pinA, pinB, arrow);
     mergeStatic(g);
     palletRoot.add(g);
-    const label = tag(`<b>P${id}</b>`, 'tag3d--pallet', g, new THREE.Vector3(0, 0.24, 0), false);
-    return { g, label };
+    // El número va sobre la propia paleta (en el utillaje), no flotando encima:
+    // así no compite por el sitio con las etiquetas de los topes.
+    const t: LiveTag = { ...tagObject(`<b><span class="tag3d__long">P</span>${id}</b>`, 'tag3d--pallet is-crowded', g, new THREE.Vector3(0, 0.085, pw * 0.3)), line: null, optional: true, crowded: true };
+    palletBoxes.set(id, t);
+    return { g, label: t.el };
   };
 
   // ---- Cámara ------------------------------------------------------------------
@@ -666,7 +712,9 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     const measure = sizeAge-- <= 0;
     if (measure) sizeAge = 20;
     const shown = !el.classList.contains('no-labels');
-    tagBoxes.forEach((b) => {
+    // Las de paleta al final y por número: entre varias juntas gana siempre la misma.
+    const all = [...tagBoxes, ...[...palletBoxes.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1])];
+    all.forEach((b) => {
       proj.setFromMatrixPosition(b.obj.matrixWorld).project(camera);
       b.visible = shown && proj.z > -1 && proj.z < 1;
       b.x = (proj.x * 0.5 + 0.5) * wpx;
@@ -676,10 +724,12 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
         b.h = b.el.offsetHeight;
       }
     });
-    placeTags(tagBoxes, wpx, hpx);
-    tagBoxes.forEach((b) => {
+    placeTags(all, wpx, hpx);
+    all.forEach((b) => {
       const tr = b.dx || b.dy ? `${Math.round(b.dx)}px ${Math.round(b.dy)}px` : '';
       if (b.el.style.translate !== tr) b.el.style.translate = tr;
+      if (b.optional) b.el.classList.toggle('is-crowded', !!b.crowded || !b.visible);
+      if (!b.line) return;
       // Línea guía hasta su sitio cuando la etiqueta se ha apartado bastante.
       const far = b.visible && Math.hypot(b.dx, b.dy) > 14;
       b.line.style.display = far ? '' : 'none';
@@ -705,6 +755,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     camera.updateProjectionMatrix();
     // En estrecho, las etiquetas muestran solo el código; el detalle, al tocarlas.
     el.classList.toggle('plant3d--compact', wpx < COMPACT_WIDTH);
+    setCompact(wpx < COMPACT_WIDTH);
     sizeAge = 0;
     if (!fitted && el.clientWidth) {
       fitted = true;
@@ -788,6 +839,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
         if (n instanceof THREE.Mesh) n.geometry.dispose();
       });
       pallets.delete(id);
+      palletBoxes.delete(id);
     });
 
     // Por qué no abre un tope que tiene paleta (sin contar lo que espera del robot mientras trabaja).
@@ -795,14 +847,15 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     stops.forEach((t) => {
       const pos = plant.cylinder.get(t.cylinder) ?? 0;
       const why = t.label.querySelector<HTMLElement>('[data-why]')!;
-      const st = layout.stations.find((x) => x.stop === t.cylinder);
-      const sp = st ? plant.stationProgress(t.cylinder) : null;
-      const own = st ? new Set([st.release, ...st.okSensors, ...st.nokSensors].filter(Boolean) as string[]) : new Set<string>();
-      const missing = (waits.get(t.cylinder) ?? []).filter((m) => !(sp && sp.progress < 1 && own.has(m.split(' ')[0])));
-      const whyTxt = missing.length ? `espera ${missing.join(', ')}` : '';
+      // Mientras el robot trabaja, lo que solo depende de él no es un bloqueo.
+      const sp = plant.stationProgress(t.cylinder);
+      const all = waits.get(t.cylinder) ?? [];
+      const missing = sp && sp.progress < 1 ? waitsOnOthers(all, plant.stationSignals(t.cylinder)) : all;
+      const whyTxt = missing.length ? `espera ${waitText(missing)}` : '';
       if (why.textContent !== whyTxt) {
         why.textContent = whyTxt;
         why.hidden = !whyTxt;
+        sizeAge = 0; // la etiqueta cambia de alto
       }
       // Cerrado: la cabeza sobresale de la cadena y frena la paleta.
       t.head.position.y = 0.005 - pos * 0.075;
