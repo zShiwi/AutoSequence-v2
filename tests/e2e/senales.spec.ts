@@ -4,7 +4,8 @@ import { expect, modalPrimary, test } from './fixtures';
 async function blankProject(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.locator('.page-head [data-act="new"]').click();
-  await page.locator('#prompt-input').fill('Prueba topes');
+  await page.locator('.wizard [data-kind="vacio"]').click();
+  await page.locator('#wiz-name').fill('Prueba topes');
   await modalPrimary(page).click();
   await expect(page).toHaveURL(/\/signals$/);
 }

@@ -203,7 +203,8 @@ test.describe('importar y exportar', () => {
   test('exportar: el nombre del archivo lleva el proyecto y la fecha, con caracteres válidos en Windows', async ({ page }) => {
     await page.goto('/');
     await page.locator('[data-act="new"]').click();
-    await page.locator('#prompt-input').fill('Línea 3: prensa <A/B>?');
+    await page.locator('.wizard [data-kind="vacio"]').click();
+    await page.locator('#wiz-name').fill('Línea 3: prensa <A/B>?');
     await modalPrimary(page).click();
     await expect(page).toHaveURL(/\/signals$/);
     const today = await page.evaluate(() => {

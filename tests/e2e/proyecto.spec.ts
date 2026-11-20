@@ -5,7 +5,8 @@ test('proyecto desde cero: señales, reglas, edición y código', async ({ page 
 
   // Crear proyecto vacío.
   await page.locator('.page-head [data-act="new"]').click();
-  await page.locator('#prompt-input').fill('Prensa hidráulica');
+  await page.locator('.wizard [data-kind="vacio"]').click();
+  await page.locator('#wiz-name').fill('Prensa hidráulica');
   await modalPrimary(page).click();
   await expect(page).toHaveURL(/\/signals$/);
   await expect(page.locator('.empty h2')).toContainText('Sin señales');

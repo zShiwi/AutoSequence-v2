@@ -170,6 +170,14 @@ export function renderSignals(app: App): HTMLElement {
       .join('');
   };
 
+  /** Rehace las opciones de los selectores «Pres.» sin repintar la tabla. */
+  const refreshPresenceOptions = () => {
+    body.querySelectorAll<HTMLSelectElement>('tr[data-i] select[data-f="presence"]').forEach((sel) => {
+      const owner = p.signals[Number(sel.closest<HTMLElement>('tr[data-i]')!.dataset.i)];
+      if (owner) sel.innerHTML = presenceOptions(p.signals, owner.presence);
+    });
+  };
+
   const refreshValidation = () => {
     const probs = signalProblems(p.signals);
     body.querySelectorAll<HTMLTableRowElement>('tr[data-i]').forEach((tr) => {
@@ -376,6 +384,8 @@ export function renderSignals(app: App): HTMLElement {
           const linked = f === 'name' && move && (s.type === 'Cilindro' || p.signals.some((x) => x.presence === after));
           refreshValidation();
           if (linked) draw();
+          // Un sensor nuevo o renombrado aparece ya en el «Pres.» de los topes.
+          else if (f === 'name' && s.type === 'Sensor') refreshPresenceOptions();
         });
       }
     });
@@ -432,6 +442,11 @@ export function renderSignals(app: App): HTMLElement {
       else delete s.presence;
       // Un sensor solo puede ser la presencia de un tope.
       p.signals.forEach((x) => x !== s && x.presence === v && v && delete x.presence);
+      // El transportador pone el sensor en el mismo tope.
+      p.layout?.stops.forEach((t) => {
+        if (t.cylinder === s.name.trim()) t.presence = v || undefined;
+        else if (v && t.presence === v) t.presence = undefined;
+      });
       keepVisible = i;
       commit();
       draw();

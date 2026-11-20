@@ -220,8 +220,16 @@ export function validateLayout(l: ConveyorLayout, signals: Signal[]): LayoutIssu
     if (seen.has(t.cylinder)) issues.push({ level: 'error', text: `El tope ${t.cylinder} está repetido.` });
     seen.add(t.cylinder);
     if (t.x < 0 || t.x > l.length) issues.push({ level: 'warn', text: `El tope ${t.cylinder} está fuera de la recta (0–${l.length} mm).` });
-    if (!t.presence) issues.push({ level: 'warn', text: `El tope ${t.cylinder} no tiene sensor de presencia.` });
   });
+  // Un solo aviso para todos los topes sin presencia (un proyecto recién
+  // creado con el asistente los tiene todos así).
+  const noPresence = l.stops.filter((t) => !t.presence).map((t) => t.cylinder);
+  if (noPresence.length === 1) issues.push({ level: 'warn', text: `El tope ${noPresence[0]} no tiene sensor de presencia.` });
+  else if (noPresence.length > 1)
+    issues.push({
+      level: 'warn',
+      text: `${noPresence.length} topes sin sensor de presencia: ${noPresence.join(', ')}. Enlázalos en Señales (columna «Pres.» de cada tope) o en «Medidas y posiciones».`,
+    });
   const sorted = l.stops.map((t) => stopS(l, t)).sort((a, b) => a - b);
   sorted.forEach((s, i) => {
     const next = sorted[(i + 1) % sorted.length];

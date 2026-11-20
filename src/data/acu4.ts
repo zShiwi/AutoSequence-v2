@@ -41,9 +41,12 @@ const sensor = (name: string, description: string, initial: 0 | 1 = 0): Signal =
 });
 const mark = (name: string, description: string): Signal => ({ name, type: 'Virtual', initial: 0, description });
 
-export function acu4Signals(): Signal[] {
+/**
+ * Motor del transportador: siempre el mismo en todo ACU. Tres señales propias
+ * (par y los dos inductivos de la cadena), los pulsadores y sus alarmas.
+ */
+export function motorSignals(): Signal[] {
   return [
-    // Seguridad del motor
     { name: 'M01', type: 'Motor', initial: 1, description: 'Motor del transportador' },
     sensor('PX21', 'Control de par del motor (1 = par OK)', 1),
     sensor('PX22', 'Comprobación de cadena rota (1 = cadena OK)', 1),
@@ -53,6 +56,33 @@ export function acu4Signals(): Signal[] {
     mark('AL_PAR', 'Alarma control de par al PLC'),
     mark('AL_CADENA_ROTA', 'Alarma cadena rota al PLC'),
     mark('AL_LONG_CADENA', 'Alarma longitud de cadena (mantenimiento)'),
+  ];
+}
+
+/** Secuencia de seguridad del motor (igual en todos los ACU). */
+export function motorBlock(): Block {
+  return {
+    name: 'Seguridad motor',
+    rules: [
+      rule('Fallo de par', [on('M01'), off('PX21')], [a('M01', '0'), a('AL_PAR', '1')]),
+      rule('Reset alarma de par', [on('PX21'), up('RESET_FALLOS')], [a('AL_PAR', '0')]),
+      rule(
+        'Arranque transportador',
+        [up('CYCLE_START'), off('AL_PAR'), off('AL_CADENA_ROTA'), on('PX21'), on('PX22')],
+        [a('M01', '1')],
+      ),
+      // Nota: la especificación filtra 2 s antes de disparar (t>2s).
+      rule('Cadena rota (t>2s)', [on('M01'), off('PX22')], [a('M01', '0'), a('AL_CADENA_ROTA', '1')]),
+      rule('Reset alarma cadena rota', [on('PX22'), up('RESET_FALLOS')], [a('AL_CADENA_ROTA', '0')]),
+      rule('Cadena alargada (solo aviso)', [on('PX23')], [a('AL_LONG_CADENA', '1')]),
+      rule('Reset aviso longitud', [off('PX23'), up('RESET_FALLOS')], [a('AL_LONG_CADENA', '0')]),
+    ],
+  };
+}
+
+export function acu4Signals(): Signal[] {
+  return [
+    ...motorSignals(),
     // Zona de carga
     sensor('PX01', 'Paleta en tope de pre-carga'),
     cyl('C01', 'Tope de pre-carga · DSBC-40-50-PPSA-N3', 'PX01'),
@@ -132,23 +162,7 @@ function zone(o: {
 export function acu4Blocks(): Block[] {
   seq = 0;
   return [
-    {
-      name: 'Seguridad motor',
-      rules: [
-        rule('Fallo de par', [on('M01'), off('PX21')], [a('M01', '0'), a('AL_PAR', '1')]),
-        rule('Reset alarma de par', [on('PX21'), up('RESET_FALLOS')], [a('AL_PAR', '0')]),
-        rule(
-          'Arranque transportador',
-          [up('CYCLE_START'), off('AL_PAR'), off('AL_CADENA_ROTA'), on('PX21'), on('PX22')],
-          [a('M01', '1')],
-        ),
-        // Nota: la especificación filtra 2 s antes de disparar (t>2s).
-        rule('Cadena rota (t>2s)', [on('M01'), off('PX22')], [a('M01', '0'), a('AL_CADENA_ROTA', '1')]),
-        rule('Reset alarma cadena rota', [on('PX22'), up('RESET_FALLOS')], [a('AL_CADENA_ROTA', '0')]),
-        rule('Cadena alargada (solo aviso)', [on('PX23')], [a('AL_LONG_CADENA', '1')]),
-        rule('Reset aviso longitud', [off('PX23'), up('RESET_FALLOS')], [a('AL_LONG_CADENA', '0')]),
-      ],
-    },
+    motorBlock(),
     {
       name: 'Zona de carga',
       rules: zone({

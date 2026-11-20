@@ -17,7 +17,9 @@ import { lastBackupAt, listTrash, TRASH_DAYS } from '../state/backups';
 import { openTrash } from './backups';
 import { matchesQuery } from './search';
 import { TEMPLATES, templateStats, type Template } from '../data/templates';
-import { confirmDialog, dateStamp, download, esc, exportFileName, h, icon, modal, promptDialog, qs, toast } from './dom';
+import { buildAcu, clampStops, kindLabel, MAX_STOPS, MIN_STOPS, stopName } from '../data/acuwizard';
+import type { ConveyorKind } from '../types';
+import { confirmDialog, dateStamp, download, esc, exportFileName, h, icon, modal, qs, toast } from './dom';
 import type { App } from './app';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -89,6 +91,166 @@ function confirmImport(fileName: string, preview: Extract<ImportPreview, { ok: t
   });
 }
 
+type WizardKind = ConveyorKind | 'vacio';
+
+/** Nombre libre: «base», o «base (2)», «base (3)»… si ya existe. */
+function freeProjectName(base: string): string {
+  let name = base;
+  let n = 2;
+  while (nameTaken(name)) name = `${base} (${n++})`;
+  return name;
+}
+
+/**
+ * Asistente de «Nuevo proyecto»: pregunta si el ACU es aéreo o de suelo y
+ * cuántos topes tiene, y crea solo el motor (con su secuencia) y los topes.
+ */
+function newProjectWizard(app: App): void {
+  let kind: WizardKind = 'aereo';
+  let stops = 4;
+  /** Mientras el usuario no escriba un nombre, se propone uno solo. */
+  let nameTouched = false;
+  const autoName = () =>
+    kind === 'vacio' ? '' : freeProjectName(`ACU ${kindLabel(kind)} ${stops} ${stops === 1 ? 'tope' : 'topes'}`);
+
+  const form = h(`
+    <form class="wizard" novalidate>
+      <fieldset class="wizard__group">
+        <legend class="field__label">¿Qué vas a programar?</legend>
+        <div class="segmented wizard__kind" role="radiogroup" aria-label="Tipo de proyecto">
+          <button type="button" role="radio" data-kind="aereo" aria-label="ACU aéreo">${icon('conveyor', 15)}<span class="lbl-long">ACU aéreo</span><span class="lbl-short">Aéreo</span></button>
+          <button type="button" role="radio" data-kind="suelo" aria-label="ACU de suelo">${icon('conveyor', 15)}<span class="lbl-long">ACU de suelo</span><span class="lbl-short">De suelo</span></button>
+          <button type="button" role="radio" data-kind="vacio">${icon('folder', 15)}<span>Vacío</span></button>
+        </div>
+      </fieldset>
+      <div class="field wizard__stops" data-slot="stops">
+        <label class="field__label" for="wiz-stops">Número de topes</label>
+        <div class="stepper">
+          <button type="button" class="icon-btn" data-step="-1" aria-label="Un tope menos">−</button>
+          <input id="wiz-stops" class="input stepper__input" type="number" inputmode="numeric" min="${MIN_STOPS}" max="${MAX_STOPS}" value="${stops}" />
+          <button type="button" class="icon-btn" data-step="1" aria-label="Un tope más">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field__label" for="wiz-name">Nombre del proyecto</label>
+        <input id="wiz-name" class="input" autocomplete="off" />
+        <p class="field__error" hidden></p>
+      </div>
+      <div class="wizard__summary" data-slot="summary" aria-live="polite"></div>
+    </form>`);
+  const nameInput = qs<HTMLInputElement>(form, '#wiz-name');
+  const stopsInput = qs<HTMLInputElement>(form, '#wiz-stops');
+  const err = qs(form, '.field__error');
+
+  const draw = () => {
+    form.querySelectorAll<HTMLElement>('[data-kind]').forEach((b) => {
+      const on = b.dataset.kind === kind;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-checked', String(on));
+    });
+    qs(form, '[data-slot="stops"]').hidden = kind === 'vacio';
+    if (!nameTouched) nameInput.value = autoName();
+    nameInput.placeholder = kind === 'vacio' ? 'Por ejemplo, el nombre de la máquina o de la estación' : '';
+    const last = stopName(stops);
+    qs(form, '[data-slot="summary"]').innerHTML =
+      kind === 'vacio'
+        ? '<p class="muted small">Proyecto sin señales ni reglas: lo defines todo tú.</p>'
+        : `<div class="wizard__col">
+             <h3>${icon('check', 15)}<span>Se crea solo</span></h3>
+             <ul>
+               <li><strong>Motor M01</strong> con par (PX21) y los dos inductivos de la cadena: rota (PX22) y longitud (PX23)</li>
+               <li><strong>Secuencia del motor</strong>: arranque, fallos de par y cadena, aviso de longitud y reset (7 reglas)</li>
+               <li><strong>${stops} ${stops === 1 ? 'tope' : 'topes'}</strong> ${stops === 1 ? 'C01' : `C01–${last}`}, cada uno con sus inductivos de activo (PX2) y reposo (PX1)</li>
+               <li>Transportador ${kindLabel(kind)} para la simulación</li>
+             </ul>
+           </div>
+           <div class="wizard__col wizard__col--todo">
+             <h3>${icon('plus', 15)}<span>Lo añades tú después</span></h3>
+             <ul>
+               <li>Inductivos de presencia en cada tope</li>
+               <li>Inductivos de paso de paleta y de acumulación máxima</li>
+               <li>Las reglas de cada tope</li>
+             </ul>
+           </div>`;
+  };
+
+  const setStops = (n: number) => {
+    stops = clampStops(n);
+    stopsInput.value = String(stops);
+    draw();
+  };
+  form.addEventListener('click', (e) => {
+    const t = e.target as HTMLElement;
+    const k = t.closest<HTMLElement>('[data-kind]')?.dataset.kind as WizardKind | undefined;
+    if (k) {
+      kind = k;
+      draw();
+      return;
+    }
+    const step = t.closest<HTMLElement>('[data-step]')?.dataset.step;
+    if (step) setStops(stops + Number(step));
+  });
+  stopsInput.addEventListener('input', () => {
+    const n = Number(stopsInput.value);
+    if (stopsInput.value !== '' && Number.isFinite(n)) {
+      stops = clampStops(n);
+      draw();
+    }
+  });
+  stopsInput.addEventListener('change', () => setStops(Number(stopsInput.value)));
+  nameInput.addEventListener('input', () => {
+    nameTouched = nameInput.value.trim() !== '';
+    err.hidden = true;
+    nameInput.removeAttribute('aria-invalid');
+  });
+
+  const submit = (): boolean => {
+    const name = nameInput.value.trim();
+    const problem = !name ? 'Escribe un nombre.' : nameTaken(name) ? 'Ya existe un proyecto con ese nombre.' : null;
+    if (problem) {
+      err.textContent = problem;
+      err.hidden = false;
+      nameInput.setAttribute('aria-invalid', 'true');
+      nameInput.focus();
+      return false;
+    }
+    const res = createProject(name, kind === 'vacio' ? {} : buildAcu({ kind, stops }));
+    if (!res.ok) {
+      toast(res.error, 'error');
+      return false;
+    }
+    if (kind !== 'vacio')
+      toast(`Creado con el motor y ${stops} ${stops === 1 ? 'tope' : 'topes'}. Añade ahora los inductivos de presencia, paso de paleta y acumulación.`, 'info', 7000);
+    app.openProject(res.project.id!);
+    return true;
+  };
+
+  const m = modal({
+    title: 'Nuevo proyecto',
+    body: form,
+    wide: true,
+    actions: [
+      { label: 'Cancelar', variant: 'ghost' },
+      { label: 'Crear proyecto', variant: 'primary', run: submit },
+    ],
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (submit()) m.close();
+  });
+  // Con dos campos el navegador no envía con Intro: se hace a mano.
+  [nameInput, stopsInput].forEach((el) =>
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (el === stopsInput) setStops(Number(stopsInput.value));
+      if (submit()) m.close();
+    }),
+  );
+  draw();
+  qs<HTMLElement>(form, '[data-kind="aereo"]').focus();
+}
+
 export function renderHome(app: App): HTMLElement {
   const page = h(`
     <div class="page page--home">
@@ -136,17 +298,7 @@ export function renderHome(app: App): HTMLElement {
     qs(notice, '[data-act="backup2"]').addEventListener('click', backup);
   };
 
-  const newProject = async () => {
-    const name = await promptDialog('Nuevo proyecto', 'Nombre del proyecto', '', {
-      confirm: 'Crear proyecto',
-      hint: 'Por ejemplo, el nombre de la máquina o de la estación.',
-      validate: (v) => (!v ? 'Escribe un nombre.' : nameTaken(v) ? 'Ya existe un proyecto con ese nombre.' : null),
-    });
-    if (name === null) return;
-    const res = createProject(name);
-    if (!res.ok) return toast(res.error, 'error');
-    app.openProject(res.project.id!);
-  };
+  const newProject = () => newProjectWizard(app);
 
   const fromTemplate = (t: Template) => {
     let name = t.projectName;

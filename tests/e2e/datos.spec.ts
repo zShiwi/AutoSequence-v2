@@ -53,7 +53,8 @@ test('una entrada dañada en el almacenamiento no hace perder los demás proyect
   await expect(rows).toHaveCount(2);
 
   await page.locator('.page-head [data-act="new"]').click();
-  await page.locator('#prompt-input').fill('Nuevo');
+  await page.locator('.wizard [data-kind="vacio"]').click();
+  await page.locator('#wiz-name').fill('Nuevo');
   await modalPrimary(page).click();
   await expect(page).toHaveURL(/\/signals$/);
   await page.locator('.brand').click();
