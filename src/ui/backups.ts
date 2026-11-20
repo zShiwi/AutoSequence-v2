@@ -21,9 +21,6 @@ export function openVersions(app: App): void {
     const list = listVersions(p.id!);
     body.innerHTML = `
       <p class="modal__text">Se guarda una versión automática cada 10 minutos de trabajo (las ${VERSIONS_MAX} más recientes). Restaurar una versión no borra nada: el estado actual se guarda antes y puedes volver con <kbd>Ctrl</kbd>+<kbd>Z</kbd>.</p>
-      <div class="versions__bar">
-        <button class="btn btn--ghost btn--sm" data-act="save">${icon('plus', 15)}<span>Guardar versión ahora</span></button>
-      </div>
       ${
         list.length
           ? `<ol class="versions__list">${list
@@ -37,25 +34,31 @@ export function openVersions(app: App): void {
                 </li>`,
               )
               .join('')}</ol>`
-          : '<p class="muted small versions__empty">Todavía no hay versiones guardadas de este proyecto.</p>'
+          : `<div class="versions__empty">${icon('history', 26)}<p><strong>Todavía no hay versiones guardadas</strong> de este proyecto. La primera se guardará sola a los 10 minutos de trabajo, o puedes guardar una ahora.</p></div>`
       }`;
   };
 
-  const m = modal({ title: `Versiones de «${p.name}»`, body, wide: true, actions: [{ label: 'Cerrar', variant: 'primary' }] });
+  const m = modal({ title: `Versiones de «${p.name}»`, body, wide: true, actions: [{ label: 'Cerrar', variant: 'ghost' }] });
+  // «Guardar versión ahora» es la acción principal del diálogo: va en el pie.
+  const foot = m.root.querySelector<HTMLElement>('.modal__foot');
+  const saveBtn = h(`<button class="btn btn--primary" data-act="save">${icon('plus', 16)}<span>Guardar versión ahora</span></button>`);
+  if (foot) {
+    foot.classList.add('modal__foot--split');
+    foot.prepend(saveBtn);
+  } else body.prepend(saveBtn);
+  saveBtn.addEventListener('click', async () => {
+    const label = await promptDialog('Guardar versión', 'Nombre de la versión', 'Revisión', {
+      confirm: 'Guardar',
+      hint: 'Por ejemplo: «Antes de cambiar la descarga» o «Enviado al cliente».',
+    });
+    if (label === null) return;
+    saveNamedVersion(label);
+    toast('Versión guardada.');
+    draw();
+  });
 
   body.addEventListener('click', async (e) => {
     const t = e.target as HTMLElement;
-    if (t.closest('[data-act="save"]')) {
-      const label = await promptDialog('Guardar versión', 'Nombre de la versión', 'Revisión', {
-        confirm: 'Guardar',
-        hint: 'Por ejemplo: «Antes de cambiar la descarga» o «Enviado al cliente».',
-      });
-      if (label === null) return;
-      saveNamedVersion(label);
-      toast('Versión guardada.');
-      draw();
-      return;
-    }
     const ts = t.closest<HTMLElement>('[data-restore]')?.dataset.restore;
     if (!ts) return;
     const ok = await confirmDialog(
@@ -94,7 +97,7 @@ export function openTrash(onChange: () => void): void {
                 </li>`,
               )
               .join('')}</ol>`
-          : '<p class="muted small versions__empty">La papelera está vacía.</p>'
+          : `<div class="versions__empty">${icon('trash', 26)}<p>La papelera está vacía.</p></div>`
       }`;
   };
   modal({ title: 'Papelera', body, wide: true, actions: [{ label: 'Cerrar', variant: 'primary' }] });

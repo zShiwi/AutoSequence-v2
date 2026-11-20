@@ -81,12 +81,16 @@ export function renderCode(app: App): HTMLElement {
   const draw = () => {
     const tabsHtml = (
       [
-        ['awl', 'AWL (lista de instrucciones)'],
-        ['kop', 'KOP (esquema de contactos)'],
-        ['symbols', `Tabla de símbolos · ${symbols.length}`],
-      ] as [Tab, string][]
+        ['awl', 'AWL (lista de instrucciones)', 'AWL'],
+        ['kop', 'KOP (esquema de contactos)', 'KOP'],
+        ['symbols', `Tabla de símbolos · ${symbols.length}`, `Símbolos · ${symbols.length}`],
+      ] as [Tab, string, string][]
     )
-      .map(([id, label]) => `<button role="tab" class="tab${tab === id ? ' is-active' : ''}" aria-selected="${tab === id}" data-tab="${id}">${label}</button>`)
+      // En pantallas estrechas se muestra el texto corto para que quepan las tres.
+      .map(
+        ([id, label, short]) =>
+          `<button role="tab" class="tab${tab === id ? ' is-active' : ''}" aria-selected="${tab === id}" aria-label="${label}" data-tab="${id}"><span class="lbl-long">${label}</span><span class="lbl-short">${short}</span></button>`,
+      )
       .join('');
 
     let content = '';

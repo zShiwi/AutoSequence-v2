@@ -57,6 +57,13 @@ const KIND_TAG: Record<WaveRow['kind'], string> = {
   derived: 'IND',
 };
 
+const KIND_TITLE: Record<WaveRow['kind'], string> = {
+  in: 'Entrada',
+  out: 'Salida',
+  mark: 'Marca',
+  derived: 'Inductivo',
+};
+
 export function renderTimingDiagram(
   rows: WaveRow[],
   history: SimStep[],
@@ -65,12 +72,17 @@ export function renderTimingDiagram(
     highlightStep?: number;
     links?: LinkMode;
     ruleLabel?: (ruleId: number | string, ruleIndex: number) => string;
+    /** Pantallas estrechas: columna de nombres ajustada y tipo como marca de color. */
+    compact?: boolean;
   } = {},
 ): string {
   if (!rows.length || !history.length) {
     return '<p class="empty-inline">No hay datos de simulación.</p>';
   }
-  const labelW = 188;
+  const compact = !!opts.compact;
+  // En compacto la columna mide lo que el nombre más largo (unos 7 px por letra).
+  const longest = rows.reduce((n, r) => Math.max(n, r.name.length), 0);
+  const labelW = compact ? Math.min(188, Math.max(72, 22 + Math.ceil(longest * 6.9))) : 188;
   const rowH = 38;
   const stepW = opts.stepW ?? Math.max(36, Math.min(48, Math.floor(1100 / history.length)));
   const width = labelW + history.length * stepW + 16;
@@ -79,6 +91,9 @@ export function renderTimingDiagram(
   const labels = rows
     .map((r, i) => {
       const y = 22 + i * rowH + rowH / 2;
+      if (compact) {
+        return `<g class="td-label"><title>${KIND_TITLE[r.kind]}</title><rect x="4" y="${y - 8}" width="3" height="16" rx="1.5" style="fill:${SCREEN_PAINT.wave[r.kind]}"/><text x="12" y="${y + 4}" style="font:500 11.5px ${SCREEN_PAINT.mono};fill:${SCREEN_PAINT.text}">${esc(r.name)}</text></g>`;
+      }
       return `<g class="td-label"><text x="12" y="${y + 4}" style="font:500 12.5px ${SCREEN_PAINT.mono};fill:${SCREEN_PAINT.text}">${esc(r.name)}</text><text x="${labelW - 12}" y="${y + 4}" text-anchor="end" style="font:600 9px ${SCREEN_PAINT.font};letter-spacing:.06em;fill:${SCREEN_PAINT.wave[r.kind]}">${KIND_TAG[r.kind]}</text></g>`;
     })
     .join('');
@@ -94,6 +109,6 @@ export function renderTimingDiagram(
 
   return `<svg class="timing-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Cronograma de señales">
   <text x="12" y="14" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">SEÑAL</text>
-  <text x="${labelW - 12}" y="14" text-anchor="end" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">CICLO →</text>
+  ${compact ? '' : `<text x="${labelW - 12}" y="14" text-anchor="end" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">CICLO →</text>`}
   ${labels}${waves}</svg>`;
 }

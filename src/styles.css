@@ -3833,3 +3833,504 @@ kbd {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- Ajustes de la revisión visual ---------------------------------------- */
+
+/* Avisos emergentes: abajo y centrados, lejos de los botones de las esquinas.
+   La franja de color va dentro del recuadro (antes sobresalía por la izquierda). */
+.toasts {
+  left: 50%;
+  right: auto;
+  bottom: 24px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  transform: translateX(-50%);
+  justify-items: center;
+}
+
+.toast {
+  border-left: 0;
+  padding-left: 17px;
+  overflow: hidden;
+  box-shadow: inset 3px 0 0 var(--toast-bar, var(--ok)), var(--shadow-lg);
+}
+
+.toast--info {
+  --toast-bar: #6aa6dc;
+}
+
+.toast--warn {
+  --toast-bar: var(--accent);
+}
+
+.toast--error {
+  --toast-bar: #e2766c;
+}
+
+/* Vista 3D: las etiquetas llevan z-index propio (por distancia); se aísla la
+   vista para que nunca queden por encima de avisos, diálogos o la barra. */
+.plant3d {
+  isolation: isolate;
+}
+
+.plant3d__leaders {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.plant3d__leaders line {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  opacity: 0.7;
+}
+
+.plant3d.no-labels .plant3d__leaders {
+  display: none;
+}
+
+/* Las de paleta se mueven sin parar: siempre por debajo de las demás. */
+.tag3d--pallet {
+  z-index: 0 !important;
+}
+
+.tag3d__short {
+  display: none;
+}
+
+.tag3d__station {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plant3d__hint {
+  z-index: 2;
+  max-width: calc(100% - 24px);
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--ink-2);
+}
+
+/* Vista 3D estrecha: solo el código de cada elemento; el detalle, al tocarlo. */
+.plant3d--compact .tag3d:not(.tag3d--pallet) {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.plant3d--compact .tag3d--stop {
+  width: auto;
+}
+
+.plant3d--compact .tag3d:not(.is-expanded) small,
+.plant3d--compact .tag3d:not(.is-expanded) .tag3d__long {
+  display: none;
+}
+
+.plant3d--compact .tag3d:not(.is-expanded) .tag3d__short {
+  display: inline;
+}
+
+.plant3d--compact .tag3d:not(.is-expanded) {
+  padding: 2px 6px 2px 5px;
+}
+
+.plant3d--compact .tag3d:not(.is-expanded) .tag3d__dot {
+  grid-row: auto;
+  align-self: center;
+  margin-top: 0;
+}
+
+.plant3d--compact .tag3d.is-expanded {
+  z-index: 100000 !important;
+  box-shadow: var(--shadow-lg);
+}
+
+.plant3d--compact .tag3d--pallet {
+  padding: 0 3px;
+}
+
+.plant3d--compact .tag3d--pallet b {
+  font-size: 9.5px;
+}
+
+/* Estado de los cilindros en «Estado del PLC»: píldora como la de los topes. */
+.io__pill {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font: 600 11.5px var(--font);
+  white-space: nowrap;
+}
+
+.io__pill--open {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.io__pill--closed {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+/* Cronogramas y esquemas más anchos que su tarjeta: el borde se difumina por
+   el lado en que queda contenido y la barra de desplazamiento se ve siempre. */
+.diagram-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.diagram-scroll.has-more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.diagram-scroll.has-more-left {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+}
+
+.diagram-scroll.has-more-left.has-more-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
+
+/* Textos largos y cortos del mismo control (pestañas, modos). */
+.lbl-short {
+  display: none;
+}
+
+/* Proyectos: las cabeceras numéricas se alinean con sus cifras. */
+.table th.num {
+  text-align: right;
+}
+
+/* Plantillas: las tarjetas se reparten todo el ancho. */
+.tpl-grid {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+/* Versiones: estado vacío legible. */
+.versions__empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 26px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  color: var(--ink-2);
+  text-align: center;
+}
+
+.versions__empty .ico {
+  color: var(--ink-3);
+}
+
+.versions__empty p {
+  margin: 0;
+  max-width: 44ch;
+}
+
+.modal__foot--split {
+  justify-content: space-between;
+}
+
+@media (max-width: 640px) {
+  .toasts {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    max-width: none;
+    transform: none;
+    justify-items: stretch;
+  }
+
+  .toast {
+    max-width: none;
+  }
+
+  .lbl-long {
+    display: none;
+  }
+
+  .lbl-short {
+    display: inline;
+  }
+
+  /* Selector de modo de Simulación: tres botones iguales en una línea. */
+  .page-head__actions > .segmented {
+    display: flex;
+    width: 100%;
+  }
+
+  .page-head__actions > .segmented button {
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+    padding: 0 6px;
+    white-space: nowrap;
+  }
+
+  /* Código PLC: pestañas en su fila (con desplazamiento) y herramientas debajo. */
+  .tabs-bar--card {
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 0;
+  }
+
+  .tabs-bar--card .tabs {
+    flex: 1 1 100%;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tabs-bar--card .tab {
+    flex: 1 0 auto;
+    justify-content: center;
+  }
+
+  .tabs-bar--card .tabs-bar__tools {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding: 6px 10px;
+  }
+
+  /* Barra superior: menos hueco entre botones para que quepa el nombre. */
+  .topbar {
+    gap: 8px;
+  }
+
+  .topbar__right {
+    gap: 2px;
+  }
+
+  .topbar__group {
+    gap: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .topbar .icon-btn,
+  .topbar__group .icon-btn {
+    width: 28px;
+  }
+
+  .topbar .btn--sm {
+    padding: 0 8px;
+  }
+
+  .crumbs {
+    padding-left: 8px;
+  }
+
+  /* Lógica: el número de regla (R1, R2…) se mantiene junto al título. */
+  .rule {
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 10px;
+  }
+
+  .rule__num {
+    display: grid;
+    width: auto;
+    min-width: 30px;
+    height: 24px;
+    padding: 0 6px;
+    margin-top: 2px;
+  }
+
+  .rule__tools {
+    grid-column: 1 / -1;
+  }
+
+  /* Proyectos: el nombre no se parte y la papelera no toca el borde. */
+  .table--projects td,
+  .table--projects th {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .table--projects th:nth-child(3),
+  .table--projects td:nth-child(3) {
+    display: none;
+  }
+
+  .table--projects .actions .icon-btn {
+    width: 28px;
+  }
+
+  /* Tablas de edición como tarjetas: una por fila, cada campo con su nombre. */
+  .table--cards,
+  .table--cards tbody,
+  .table--edit:not(.table--plant),
+  .table--edit:not(.table--plant) tbody,
+  .table--edit:not(.table--plant) td {
+    display: block;
+  }
+
+  .table--cards thead,
+  .table--edit:not(.table--plant) thead {
+    display: none;
+  }
+
+  .table--cards tr:not([hidden]) {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .table--cards tr:last-child {
+    border-bottom: 0;
+  }
+
+  .table--cards td {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .table--cards td[data-label]::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .table--cards td:first-child {
+    grid-column: 1 / -1;
+    padding-right: 40px;
+  }
+
+  .table--cards td.actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  .table--cards .table-empty td {
+    padding: 4px 0;
+  }
+
+  .table--cards .input,
+  .table--cards .input-unit {
+    min-width: 0;
+  }
+
+  /* Señales: nombre a todo el ancho; tipo, valor inicial y uso en una fila;
+     descripción e inductivos debajo. */
+  .table--edit:not(.table--plant) tr:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'name name del'
+      'type init usage'
+      'desc desc desc'
+      'ind ind ind';
+    gap: 8px 10px;
+    align-items: start;
+    padding: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .table--edit:not(.table--plant) tr:last-child {
+    border-bottom: 0;
+  }
+
+  .table--edit:not(.table--plant) td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .table--edit:not(.table--plant) td:nth-child(1) {
+    grid-area: name;
+  }
+
+  .table--edit:not(.table--plant) td:nth-child(2) {
+    grid-area: type;
+  }
+
+  .table--edit:not(.table--plant) td:nth-child(3) {
+    grid-area: init;
+  }
+
+  .table--edit:not(.table--plant) td:nth-child(4) {
+    grid-area: desc;
+  }
+
+  .table--edit:not(.table--plant) td:nth-child(5) {
+    grid-area: ind;
+  }
+
+  .table--edit:not(.table--plant) td:nth-child(5):has(> .muted:only-child) {
+    display: none;
+  }
+
+  .table--edit:not(.table--plant) td.usage {
+    grid-area: usage;
+    min-width: 62px;
+    padding-top: 7px;
+    text-align: right;
+  }
+
+  .table--edit:not(.table--plant) td.actions {
+    grid-area: del;
+    width: auto;
+  }
+
+  .table--edit:not(.table--plant) .row--stop td:first-child,
+  .table--edit:not(.table--plant) .row--presence td:first-child {
+    box-shadow: none;
+  }
+
+  .table--edit:not(.table--plant) tr.row--stop {
+    box-shadow: inset 3px 0 0 var(--t-out);
+  }
+
+  .table--edit:not(.table--plant) tr.row--presence {
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--t-out) 35%, transparent);
+  }
+
+  /* Versiones: el pie se apila. */
+  .modal__foot--split {
+    flex-wrap: wrap;
+  }
+}
+
+/* Topes con estación: sitio para «Robot de descarga: trabajando 100 %». */
+.tag3d--stop-station {
+  width: 228px;
+}
+
+.plant3d--compact .tag3d--stop-station:not(.is-expanded) {
+  width: auto;
+}
+
+/* El editor se lleva a la vista al abrirlo: que no quede bajo las barras fijas. */
+.plant-editor {
+  scroll-margin-top: 116px;
+}
+
+/* Señales (tabla): la píldora de uso y los guiones, centrados con los campos. */
+@media (min-width: 641px) {
+  .table--edit:not(.table--plant) td.usage,
+  .table--edit:not(.table--plant) td:nth-child(5):has(> .muted:only-child),
+  .table--edit:not(.table--plant) td:nth-child(5):has(> .badge:only-child) {
+    padding-top: 14px;
+  }
+}
