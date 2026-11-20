@@ -34,7 +34,7 @@ export function allSignalNames(signals: Signal[]): string[] {
 
 /** Señales escritas por alguna acción. */
 export function actionTargets(rules: Rule[]): Set<string> {
-  return new Set(rules.flatMap((r) => r.actions.map((a) => a.signal)));
+  return new Set(rules.flatMap((r) => (r.actions || []).map((a) => a.signal)));
 }
 
 /**
@@ -72,8 +72,8 @@ export const TYPE_HINT: Record<SignalType, string> = {
 export function signalsUsedBy(rules: Rule[]): Set<string> {
   const used = new Set<string>();
   rules.forEach((r) => {
-    r.conditions.forEach((c) => used.add(c.signal));
-    r.actions.forEach((a) => used.add(a.signal));
+    (r.conditions || []).forEach((c) => used.add(c.signal));
+    (r.actions || []).forEach((a) => used.add(a.signal));
   });
   return used;
 }
@@ -81,15 +81,69 @@ export function signalsUsedBy(rules: Rule[]): Set<string> {
 /**
  * Señales utilizables por simulación y generación de código: con nombre
  * válido y sin duplicados (se queda la primera aparición).
+ *
+ * Los inductivos pasan el mismo filtro: uno con nombre no válido, repetido en
+ * otro cilindro o igual al nombre de una señal se descarta (el cilindro se
+ * queda sin ese inductivo), porque en la tabla de símbolos saldría duplicado
+ * y en la simulación un cilindro pisaría al otro.
  */
 export function cleanSignals(signals: Signal[]): Signal[] {
   const seen = new Set<string>();
-  return signals.filter((s) => {
-    const n = s.name.trim();
+  const kept = signals.filter((s) => {
+    const n = typeof s?.name === 'string' ? s.name.trim() : '';
     if (!n || validateSignalName(n) || seen.has(n)) return false;
     seen.add(n);
     return true;
   });
+  return kept.map((s) => {
+    if (s.type !== 'Cilindro') return s;
+    const usable = (name: string | undefined): boolean => {
+      if (!name) return true;
+      if (typeof name !== 'string' || validateSignalName(name) || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    };
+    const activo = usable(s.inductivoActivo);
+    const reposo = usable(s.inductivoReposo);
+    if (activo && reposo) return s;
+    const copy = { ...s };
+    if (!activo) delete copy.inductivoActivo;
+    if (!reposo) delete copy.inductivoReposo;
+    return copy;
+  });
+}
+
+/**
+ * Problemas de los inductivos de cada cilindro, por posición en la lista:
+ * nombre no válido, igual a una señal, el mismo para activo y reposo o
+ * repetido en otro cilindro. Son los que `cleanSignals` descarta.
+ */
+export function inductivoProblems(signals: Signal[]): Map<number, { activo?: string; reposo?: string }> {
+  const names = new Set(signals.map((s) => (typeof s?.name === 'string' ? s.name.trim() : '')).filter(Boolean));
+  const count = new Map<string, number>();
+  signals.forEach((s) => {
+    if (s.type !== 'Cilindro') return;
+    [s.inductivoActivo, s.inductivoReposo].forEach((n) => {
+      if (n) count.set(n, (count.get(n) ?? 0) + 1);
+    });
+  });
+  const out = new Map<number, { activo?: string; reposo?: string }>();
+  signals.forEach((s, i) => {
+    if (s.type !== 'Cilindro') return;
+    const check = (n: string | undefined): string | undefined => {
+      if (!n) return undefined;
+      const v = validateSignalName(n);
+      if (v) return v;
+      if (names.has(n)) return `«${n}» ya es el nombre de una señal`;
+      if (s.inductivoActivo === s.inductivoReposo) return 'Activo y reposo no pueden ser el mismo inductivo';
+      if ((count.get(n) ?? 0) > 1) return `«${n}» ya es inductivo de otro cilindro`;
+      return undefined;
+    };
+    const activo = check(s.inductivoActivo);
+    const reposo = check(s.inductivoReposo);
+    if (activo || reposo) out.set(i, { ...(activo ? { activo } : {}), ...(reposo ? { reposo } : {}) });
+  });
+  return out;
 }
 
 // ---- Alta rápida ------------------------------------------------------------
