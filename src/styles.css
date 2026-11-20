@@ -4334,3 +4334,149 @@ kbd {
     padding-top: 14px;
   }
 }
+
+/* ---- Segunda tanda: transportador y cronograma ----------------------------- */
+
+/* Cronograma partido en dos: los nombres quedan fijos a la izquierda y las
+   ondas se desplazan por debajo. Comparten contenedor, así que tienen la misma
+   altura y el mismo desplazamiento vertical. */
+.diagram-scroll--timing {
+  padding-left: 0;
+}
+
+.timing {
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+  min-width: 100%;
+}
+
+.timing-names {
+  display: block;
+  max-width: none;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: none;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.timing-svg--waves {
+  flex: none;
+}
+
+/* Con ciclos ocultos a la izquierda, la columna fija lo indica con su sombra
+   (el difuminado del borde taparía los nombres). */
+.diagram-scroll--timing.has-more-left .timing-names {
+  box-shadow:
+    1px 0 0 var(--line-strong),
+    8px 0 10px -6px rgba(10, 20, 30, 0.28);
+}
+
+.diagram-scroll--timing.has-more-left {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.diagram-scroll--timing.has-more-left.has-more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.diagram-scroll--timing:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+/* Vista 3D: el número de la paleta va sobre la propia paleta, pequeño. Entra
+   en el reparto de etiquetas con menos prioridad: si no cabe, no se muestra. */
+.tag3d--pallet {
+  padding: 0 4px;
+  border-radius: 3px;
+  box-shadow: none;
+  line-height: 1.3;
+}
+
+.tag3d--pallet b {
+  font-size: 10px;
+}
+
+.tag3d--pallet.is-crowded {
+  visibility: hidden;
+}
+
+/* Parada: fondo neutro con el texto del tema (en oscuro el azul no se leía). */
+.tag3d--pallet.is-stopped {
+  color: var(--ink);
+}
+
+/* Paletas configuradas que no caben: aviso junto al contador y en su campo. */
+.stepper__over {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font: 600 12px var(--font);
+  white-space: nowrap;
+}
+
+/* Es un aviso, no un error: la simulación sigue con las que caben. */
+.field--warn .input[aria-invalid] {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.field__warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--warn);
+}
+
+.field__warn svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* En estrecho, solo el número: así caben todas las de una cola. */
+.plant3d--compact .tag3d.tag3d--pallet:not(.is-expanded) {
+  padding: 0 3px;
+}
+
+.plant3d--compact .tag3d--pallet b {
+  font-size: 9.5px;
+}
+
+/* «espera A = 1 o B = 1…» puede ser largo: se lee entero, en varias líneas. */
+.tag3d__why {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+/* Esquema más ancho que su tarjeta (móvil): el borde avisa de que continúa. */
+.plant-canvas {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.plant-canvas.has-more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.plant-canvas.has-more-left {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+}
+
+.plant-canvas.has-more-left.has-more-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}

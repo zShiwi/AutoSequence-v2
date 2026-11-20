@@ -3,7 +3,7 @@
 import { allRules, project } from '../state/store';
 import { Simulator, runAutoScenario } from '../plc/simulation';
 import { cleanSignals, signalsUsedBy, actionTargets } from '../plc/signals';
-import { buildRows, renderTimingDiagram } from '../diagram/timing';
+import { buildRows, renderTimingDiagram, renderTimingSplit, type TimingOptions } from '../diagram/timing';
 import { download, esc, h, icon, qs, slug, toast } from './dom';
 import { standaloneSvg } from '../diagram/ladder';
 import { ruleLabeler, type RuleLabeler } from '../plc/rules';
@@ -165,6 +165,11 @@ export function renderSimulation(app: App): HTMLElement {
     const manual = ui.mode === 'manual';
     const sim = manual ? globalSim() : null;
     const separate = list.length > 1;
+    const timingOpts = (v: View): TimingOptions => ({
+      links: ui.allLinks ? 'all' : 'hover',
+      ruleLabel,
+      highlightStep: manual ? v.history.length - 1 : undefined,
+    });
 
     body.innerHTML = `
       ${warnings.map((w) => `<div class="callout callout--warn">${icon('alert', 18)}<p>${esc(w)}</p></div>`).join('')}
@@ -200,10 +205,8 @@ export function renderSimulation(app: App): HTMLElement {
             <div><h2>${esc(v.title)}</h2><span class="muted small">${esc(v.subtitle)}${manual ? '' : ` · ${v.history.length} ciclos`}</span></div>
             <button class="btn btn--ghost btn--sm" data-svg="${n}" title="Descargar este cronograma como imagen SVG">${icon('download', 15)}<span>SVG</span></button>
           </header>
-          <div class="diagram-scroll" data-diagram="${n}">${renderTimingDiagram(v.rows, v.history, {
-            links: ui.allLinks ? 'all' : 'hover',
-            ruleLabel,
-            highlightStep: manual ? v.history.length - 1 : undefined,
+          <div class="diagram-scroll diagram-scroll--timing" data-diagram="${n}" tabindex="0" role="group" aria-label="Cronograma de ${esc(v.title)}: desplázalo en horizontal para ver todos los ciclos">${renderTimingSplit(v.rows, v.history, {
+            ...timingOpts(v),
             compact: window.innerWidth <= 640,
           })}<div class="fx-tip" role="tooltip" hidden></div></div>
           ${
@@ -227,10 +230,10 @@ export function renderSimulation(app: App): HTMLElement {
       body.querySelectorAll<HTMLElement>('.diagram-scroll').forEach((s) => (s.scrollLeft = s.scrollWidth));
     }
     watchScrollEdges(body, '.diagram-scroll');
-    // Guardar las vistas para la descarga SVG.
-    lastViews = list;
+    // La descarga vuelve a dibujar el cronograma entero en un único SVG.
+    lastViews = list.map((v) => ({ view: v, svg: () => renderTimingDiagram(v.rows, v.history, timingOpts(v)) }));
   };
-  let lastViews: View[] = [];
+  let lastViews: { view: View; svg: () => string }[] = [];
 
   // Ficha y línea de relación al señalar la etiqueta de una regla.
   const showFx = (tag: SVGGElement | null) => {
@@ -278,9 +281,8 @@ export function renderSimulation(app: App): HTMLElement {
       return;
     }
     if (svgIdx !== undefined) {
-      const svg = body.querySelector(`[data-diagram="${svgIdx}"] svg`);
       const v = lastViews[Number(svgIdx)];
-      if (svg && v) void download(`${slug(p.name)}-${slug(v.title)}-cronograma.svg`, standaloneSvg(svg.outerHTML), 'image/svg+xml');
+      if (v) void download(`${slug(p.name)}-${slug(v.view.title)}-cronograma.svg`, standaloneSvg(v.svg()), 'image/svg+xml');
       return;
     }
     if (tog) {
