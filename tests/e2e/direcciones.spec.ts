@@ -210,6 +210,8 @@ test('importar conserva las direcciones y corrige las repetidas o no válidas av
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(file)),
   });
+  // Importar enseña antes qué entra y espera confirmación.
+  await modalPrimary(page).click();
   const warn = page.locator('.toast--warn');
   await expect(warn).toContainText('2 direcciones no eran válidas o estaban repetidas');
   await expect(warn).toContainText('PX02 pasa de «E 3.3» a E 0.0');

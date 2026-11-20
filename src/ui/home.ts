@@ -10,12 +10,84 @@ import {
   importFile,
   loadProjects,
   nameTaken,
+  previewImport,
+  type ImportPreview,
 } from '../state/store';
 import { lastBackupAt, listTrash, TRASH_DAYS } from '../state/backups';
 import { openTrash } from './backups';
+import { matchesQuery } from './search';
 import { TEMPLATES, templateStats, type Template } from '../data/templates';
-import { confirmDialog, download, esc, h, icon, promptDialog, qs, slug, toast } from './dom';
+import { confirmDialog, dateStamp, download, esc, exportFileName, h, icon, modal, promptDialog, qs, toast } from './dom';
 import type { App } from './app';
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Antes de importar: qué proyectos entran, cuáles cambian de nombre por estar
+ * repetido y cuáles se descartan. No se guarda nada hasta confirmar.
+ */
+function confirmImport(fileName: string, preview: Extract<ImportPreview, { ok: true }>): Promise<boolean> {
+  const { entries, discarded } = preview;
+  const renamed = entries.filter((e) => e.renamed).length;
+  const body = h(`
+    <div class="import-preview">
+      <p class="modal__text">${
+        preview.kind === 'backup' ? 'Copia de seguridad' : 'Proyecto'
+      } <strong>${esc(fileName)}</strong>. Los proyectos que ya tienes no se modifican.</p>
+      <section class="import-preview__group" data-group="in">
+        <h3>${icon('check', 15)}<span>Se ${entries.length === 1 ? 'importará' : 'importarán'} ${plural(entries.length, 'proyecto', 'proyectos')}${
+          renamed ? `, ${renamed === 1 ? 'uno' : renamed} con otro nombre` : ''
+        }</span></h3>
+        <ul class="import-preview__list">
+          ${entries
+            .map(
+              (e) => `<li${e.renamed ? ' class="is-renamed"' : ''}>
+                <div class="import-preview__name">${
+                  e.renamed
+                    ? `<span class="import-preview__old">${esc(e.name)}</span><span class="import-preview__arrow" aria-hidden="true">→</span><strong>${esc(e.finalName)}</strong>`
+                    : `<strong>${esc(e.finalName)}</strong>`
+                }</div>
+                <span class="muted small">${plural(e.signals, 'señal', 'señales')} · ${plural(e.rules, 'regla', 'reglas')} · ${plural(e.blocks, 'bloque', 'bloques')}</span>
+                ${e.renamed ? `<span class="import-preview__why small">Se renombra porque ya existe «${esc(e.name)}».</span>` : ''}
+              </li>`,
+            )
+            .join('')}
+        </ul>
+      </section>
+      ${
+        discarded.length
+          ? `<section class="import-preview__group import-preview__group--bad" data-group="out">
+              <h3>${icon('alert', 15)}<span>Se ${discarded.length === 1 ? 'descartará' : 'descartarán'} ${plural(discarded.length, 'elemento dañado', 'elementos dañados')}</span></h3>
+              <ul class="import-preview__list">
+                ${discarded.map((d) => `<li><div class="import-preview__name"><strong>${esc(d.name)}</strong></div><span class="muted small">${esc(d.reason)}</span></li>`).join('')}
+              </ul>
+            </section>`
+          : ''
+      }
+    </div>`);
+  return new Promise((resolve) => {
+    let answered = false;
+    modal({
+      title: 'Importar proyectos',
+      body,
+      wide: true,
+      onClose: () => {
+        if (!answered) resolve(false);
+      },
+      actions: [
+        { label: 'Cancelar', variant: 'ghost' },
+        {
+          label: `Importar ${plural(entries.length, 'proyecto', 'proyectos')}`,
+          variant: 'primary',
+          run: () => {
+            answered = true;
+            resolve(true);
+          },
+        },
+      ],
+    });
+  });
+}
 
 export function renderHome(app: App): HTMLElement {
   const page = h(`
@@ -40,11 +112,12 @@ export function renderHome(app: App): HTMLElement {
     </div>`);
 
   const list = qs(page, '[data-slot="list"]');
+  /** Texto del buscador de proyectos (se conserva al repintar la lista). */
+  let query = '';
   const notice = qs(page, '[data-slot="notice"]');
 
   const backup = () => {
-    const stamp = new Date().toISOString().slice(0, 10);
-    void download(`autosequence-copia-${stamp}.json`, exportAllJSON(), 'application/json', 'Copia de seguridad descargada.');
+    void download(`autosequence-copia-${dateStamp()}.json`, exportAllJSON(), 'application/json', 'Copia de seguridad descargada.');
     drawNotice();
   };
 
@@ -135,6 +208,18 @@ export function renderHome(app: App): HTMLElement {
 
     const trashCount = listTrash().length;
     list.innerHTML = `
+      ${
+        projects.length > 1
+          ? `<div class="filterbar filterbar--home" role="search" aria-label="Buscar proyectos">
+               <label class="searchbox">
+                 ${icon('search', 16)}
+                 <input type="search" class="searchbox__input" data-f="pq" placeholder="Buscar proyecto…" aria-label="Buscar proyectos" title="Buscar proyectos (Ctrl+K)" autocomplete="off" spellcheck="false" value="${esc(query)}" />
+                 <button type="button" class="searchbox__clear" data-act="clear-pq" aria-label="Borrar búsqueda" hidden>${icon('x', 14)}</button>
+               </label>
+               <span class="filterbar__count muted small" data-slot="pcount" aria-live="polite"></span>
+             </div>`
+          : ''
+      }
       <div class="card card--flush"><div class="table-scroll">
         <table class="table table--projects">
           <thead><tr>
@@ -151,15 +236,19 @@ export function renderHome(app: App): HTMLElement {
                   <td class="num">${p.blocks.length}</td>
                   <td class="muted">${esc(formatRelative(p.updatedAt))}</td>
                   <td class="actions">
-                    <button class="icon-btn" data-act="dup" title="Duplicar" aria-label="Duplicar ${esc(p.name)}">${icon('duplicate', 16)}</button>
-                    <button class="icon-btn" data-act="exp" title="Exportar JSON" aria-label="Exportar ${esc(p.name)}">${icon('download', 16)}</button>
-                    <button class="icon-btn icon-btn--danger" data-act="del" title="Eliminar" aria-label="Eliminar ${esc(p.name)}">${icon('trash', 16)}</button>
+                    <button class="icon-btn" data-act="dup" title="Duplicar proyecto" aria-label="Duplicar ${esc(p.name)}">${icon('duplicate', 16)}</button>
+                    <button class="icon-btn" data-act="exp" title="Exportar como .json" aria-label="Exportar ${esc(p.name)}">${icon('download', 16)}</button>
+                    <button class="icon-btn icon-btn--danger" data-act="del" title="Mover a la papelera" aria-label="Eliminar ${esc(p.name)}">${icon('trash', 16)}</button>
                   </td>
                 </tr>`;
               })
               .join('')}
           </tbody>
         </table>
+      </div>
+      <div class="filter-empty" data-slot="pempty" hidden>
+        ${icon('search', 22)}
+        <p><strong>Ningún proyecto coincide</strong> con la búsqueda.</p>
       </div></div>
       <p class="footnote">Los proyectos se guardan automáticamente en este navegador, con versiones cada 10 minutos.
         Usa <strong>Copia de seguridad</strong> para guardarlos fuera del navegador o pasarlos a otro equipo.
@@ -167,6 +256,42 @@ export function renderHome(app: App): HTMLElement {
       ${templatesHtml()}`;
 
     bindTemplates();
+    const pq = list.querySelector<HTMLInputElement>('[data-f="pq"]');
+    if (!pq) query = '';
+    /** Oculta las filas cuyo nombre no coincide con la búsqueda. */
+    const applyQuery = () => {
+      let shown = 0;
+      list.querySelectorAll<HTMLTableRowElement>('tbody tr').forEach((tr) => {
+        const ok = matchesQuery([projects.find((x) => x.id === tr.dataset.id)?.name], query);
+        tr.hidden = !ok;
+        if (ok) shown++;
+      });
+      const clear = list.querySelector<HTMLElement>('[data-act="clear-pq"]');
+      if (clear) clear.hidden = !query;
+      const count = list.querySelector('[data-slot="pcount"]');
+      if (count) count.textContent = query.trim() ? `Mostrando ${shown} de ${projects.length}` : `${projects.length} proyectos`;
+      qs(list, '[data-slot="pempty"]').hidden = shown > 0;
+      qs(list, '.table-scroll').hidden = shown === 0;
+    };
+    pq?.addEventListener('input', () => {
+      query = pq.value;
+      applyQuery();
+    });
+    pq?.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && pq.value) {
+        e.preventDefault();
+        e.stopPropagation();
+        pq.value = query = '';
+        applyQuery();
+      }
+    });
+    list.querySelector('[data-act="clear-pq"]')?.addEventListener('click', () => {
+      if (pq) pq.value = '';
+      query = '';
+      applyQuery();
+      pq?.focus();
+    });
+    applyQuery();
     list.querySelector('[data-act="trash"]')?.addEventListener('click', () => openTrash(() => { draw(); drawNotice(); }));
     list.querySelectorAll<HTMLTableRowElement>('tbody tr').forEach((tr) => {
       const id = tr.dataset.id!;
@@ -179,7 +304,7 @@ export function renderHome(app: App): HTMLElement {
           else toast('No se pudo duplicar: el almacenamiento del navegador está lleno.', 'error', 5000);
           draw();
         } else if (act === 'exp') {
-          void download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json', 'Proyecto exportado.');
+          void download(exportFileName(p.name), exportProjectJSON(p), 'application/json', 'Proyecto exportado.');
         } else if (act === 'del') {
           const ok = await confirmDialog(
             'Eliminar proyecto',
@@ -209,12 +334,17 @@ export function renderHome(app: App): HTMLElement {
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    let res: ReturnType<typeof importFile>;
+    let text: string;
+    let preview: ImportPreview;
     try {
-      res = importFile(await file.text());
+      text = await file.text();
+      preview = previewImport(text);
     } catch {
-      res = { ok: false, error: 'No se pudo leer el archivo.' };
+      return toast('No se pudo leer el archivo.', 'error', 5000);
     }
+    if (!preview.ok) return toast(preview.error, 'error', 5000);
+    if (!(await confirmImport(file.name, preview))) return;
+    const res = importFile(text);
     if (!res.ok) return toast(res.error, 'error', 5000);
     const skipped = res.skipped
       ? ` ${res.skipped} no se ${res.skipped === 1 ? 'pudo' : 'pudieron'} importar.`

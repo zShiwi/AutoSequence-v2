@@ -41,6 +41,24 @@ mueve las demás y la documentación impresa o el cableado siguen coincidiendo.
   exactamente las que se le calculaban. Al importar, las repetidas o no
   válidas se sustituyen por un hueco libre y se avisa.
 
+Al importar se muestra antes qué proyectos entran, cuáles cambian de nombre por
+estar repetido y cuáles se descartan por dañados. El archivo exportado lleva el
+nombre del proyecto y la fecha (`ACU 4 topes · 2026-11-20.json`).
+
+### Atajos de teclado
+
+`?` abre la lista completa (también el botón de ayuda de la barra superior).
+
+| Atajo | Acción |
+| --- | --- |
+| `Ctrl+K` o `/` | Buscar (señales, reglas o proyectos) |
+| `Ctrl+S` | Guardar ahora |
+| `Ctrl+Z` / `Ctrl+Y` | Deshacer / rehacer |
+| `Alt+1` … `Alt+5` | Ir a cada paso |
+| `Esc` | Cerrar el diálogo abierto |
+
+Los atajos de una sola tecla no actúan mientras se escribe en un campo.
+
 ## Modelo de simulación
 
 Replica un ciclo de PLC y es equivalente al AWL generado:

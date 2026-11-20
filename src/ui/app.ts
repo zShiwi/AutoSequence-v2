@@ -21,10 +21,12 @@ import {
   canRedo,
   canUndo,
   redo,
+  saveNow,
   undo,
 } from '../state/store';
 import { openVersions } from './backups';
-import { download, esc, h, icon, promptDialog, qs, slug, toast } from './dom';
+import { download, esc, exportFileName, h, icon, promptDialog, qs, toast, watchIconButtons } from './dom';
+import { isTypingTarget, openShortcuts, shortcutFor, shortcutsOpen } from './shortcuts';
 import { renderHome } from './home';
 import { renderSignals } from './signals';
 import { renderLogic } from './logic';
@@ -58,6 +60,8 @@ export class App {
   section: Section | null = null;
   private unsub: (() => void) | null = null;
   private tick: number | undefined;
+  /** Ctrl+K desde una sección sin buscador: se enfoca al llegar a Señales. */
+  private pendingSearch = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -70,29 +74,74 @@ export class App {
       if (document.visibilityState === 'hidden') flushSave();
     });
     document.addEventListener('keydown', (e) => this.onKey(e));
+    watchIconButtons();
     this.route();
   }
 
-  // ---- Deshacer / rehacer ------------------------------------------------
+  // ---- Atajos de teclado -------------------------------------------------
 
   private onKey(e: KeyboardEvent): void {
-    if (!session.project || !(e.ctrlKey || e.metaKey) || e.altKey) return;
-    const key = e.key.toLowerCase();
-    const isUndo = key === 'z' && !e.shiftKey;
-    const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
-    if (!isUndo && !isRedo) return;
-    // En un campo de texto, Ctrl+Z deshace lo escrito en ese campo.
-    const t = e.target as HTMLElement | null;
-    const typing =
-      t &&
-      ((t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'file'].includes((t as HTMLInputElement).type)) ||
-        t.tagName === 'TEXTAREA' ||
-        t.isContentEditable);
-    if (typing || document.querySelector('.modal-backdrop')) return;
+    if (e.defaultPrevented || e.isComposing) return;
+    const modalOpen = !!document.querySelector('.modal-backdrop');
+    const action = shortcutFor(
+      {
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        altGraph: e.getModifierState?.('AltGraph'),
+      },
+      { typing: isTypingTarget(e.target), modalOpen, inProject: !!session.project },
+    );
+    if (!action) return;
+    // Con otro diálogo abierto, «?» no abre la ayuda encima.
+    if (action.type === 'help' && modalOpen && !shortcutsOpen()) return;
     e.preventDefault();
-    if (isUndo) this.undo();
-    else this.redo();
+    switch (action.type) {
+      case 'help':
+        return openShortcuts();
+      case 'search':
+        return this.focusSearch();
+      case 'save':
+        return this.save();
+      case 'undo':
+        return this.undo();
+      case 'redo':
+        return this.redo();
+      case 'section':
+        return this.go(SECTIONS[action.index].id);
+    }
   }
+
+  /** Guarda ahora (Ctrl+S) y lo confirma con un aviso. */
+  save(): void {
+    if (!session.project) return toast('Los proyectos se guardan solos al editarlos.', 'info', 2200);
+    if (saveNow()) toast('Guardado', 'ok', 1800);
+    else toast('No se pudo guardar: el almacenamiento del navegador está lleno o bloqueado.', 'error', 5000);
+  }
+
+  /**
+   * Lleva el foco al buscador de la pantalla (Ctrl+K o «/»). Desde una sección
+   * sin buscador va a Señales y lo enfoca allí.
+   */
+  focusSearch(): void {
+    const box = [...this.root.querySelectorAll<HTMLInputElement>('.searchbox__input')].find((el) => el.offsetParent !== null);
+    if (box) {
+      box.focus();
+      box.select();
+      return;
+    }
+    if (session.project && this.section !== 'signals' && this.section !== 'logic') {
+      this.pendingSearch = true;
+      this.go('signals');
+      return;
+    }
+    toast(session.project ? 'Aún no hay nada que buscar en esta sección.' : 'Aún no hay proyectos entre los que buscar.', 'info', 2200);
+  }
+
+  // ---- Deshacer / rehacer ------------------------------------------------
 
   undo(): void {
     if (undo()) {
@@ -189,6 +238,10 @@ export class App {
     host.scrollTop = 0;
     window.scrollTo({ top: 0 });
     this.refreshChrome();
+    if (this.pendingSearch) {
+      this.pendingSearch = false;
+      this.focusSearch();
+    }
   }
 
   // ---- Barra superior ------------------------------------------------------
@@ -201,7 +254,7 @@ export class App {
           ${
             inProject
               ? `<a href="#/" class="crumbs__link">Proyectos</a><span class="crumbs__sep">/</span>
-                 <button class="crumbs__project" data-act="rename" title="Renombrar proyecto"><span data-slot="pname"></span>${icon('edit', 14)}</button>`
+                 <button class="crumbs__project" data-act="rename" title="Renombrar proyecto" aria-label="Renombrar proyecto"><span data-slot="pname"></span>${icon('edit', 14)}</button>`
               : `<span class="crumbs__here">Proyectos</span>`
           }
         </div>
@@ -210,16 +263,18 @@ export class App {
              <div class="topbar__group" role="group" aria-label="Historial de cambios">
                <button class="icon-btn" data-act="undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">${icon('undo', 18)}</button>
                <button class="icon-btn" data-act="redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">${icon('redo', 18)}</button>
-               <button class="icon-btn" data-act="versions" title="Versiones guardadas" aria-label="Versiones guardadas">${icon('history', 18)}</button>
+               <button class="icon-btn" data-act="versions" title="Versiones guardadas del proyecto" aria-label="Versiones guardadas">${icon('history', 18)}</button>
              </div>
-             <button class="btn btn--ghost btn--sm" data-act="export" title="Descargar el proyecto como archivo .json">${icon('download', 16)}<span>Exportar</span></button>` : ''}
-          <button class="icon-btn" data-act="theme" aria-label="Cambiar tema claro/oscuro" title="Cambiar tema">${icon('moon', 18)}</button>
+             <button class="btn btn--ghost btn--sm" data-act="export" title="Descargar el proyecto como archivo .json, con la fecha en el nombre">${icon('download', 16)}<span>Exportar</span></button>` : ''}
+          <button class="icon-btn topbar__help" data-act="help" aria-label="Atajos de teclado" title="Atajos de teclado (?)">${icon('help', 18)}</button>
+          <button class="icon-btn" data-act="theme" aria-label="Cambiar tema claro/oscuro" title="Cambiar tema claro/oscuro">${icon('moon', 18)}</button>
         </div>
       </header>`;
   }
 
   private bindTopbar(): void {
     this.root.querySelector('[data-act="theme"]')?.addEventListener('click', toggleTheme);
+    this.root.querySelector('[data-act="help"]')?.addEventListener('click', () => openShortcuts());
     this.root.querySelector('[data-act="undo"]')?.addEventListener('click', () => this.undo());
     this.root.querySelector('[data-act="redo"]')?.addEventListener('click', () => this.redo());
     this.root.querySelector('[data-act="versions"]')?.addEventListener('click', () => openVersions(this));
@@ -227,7 +282,7 @@ export class App {
       const p = session.project;
       if (!p) return;
       flushSave();
-      void download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json', 'Proyecto exportado como JSON.');
+      void download(exportFileName(p.name), exportProjectJSON(p), 'application/json', 'Proyecto exportado como JSON.');
     });
     this.root.querySelector('[data-act="rename"]')?.addEventListener('click', async () => {
       const p = session.project;
@@ -285,7 +340,7 @@ export class App {
     list.innerHTML = SECTIONS.map(
       (s, i) => `
       <li>
-        <a class="step${s.id === this.section ? ' is-current' : ''}" href="#/p/${esc(p.id)}/${s.id}" ${s.id === this.section ? 'aria-current="page"' : ''}>
+        <a class="step${s.id === this.section ? ' is-current' : ''}" href="#/p/${esc(p.id)}/${s.id}" ${s.id === this.section ? 'aria-current="page"' : ''} title="${s.title} (Alt+${i + 1})">
           <span class="step__num">${i + 1}</span>
           <span class="step__body"><span class="step__title">${icon(s.icon, 16)}${s.title}</span><span class="step__meta">${esc(meta[s.id].text)}</span></span>
           <span class="step__state step__state--${meta[s.id].state}" aria-hidden="true"></span>

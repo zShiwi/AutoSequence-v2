@@ -40,6 +40,8 @@ test('copia de seguridad completa: descarga e importación', async ({ page }) =>
 
   // Importar la copia añade de nuevo los dos proyectos (con nombres únicos).
   await page.locator('[data-act="import"]').setInputFiles(file);
+  // Antes de importar se confirma la lista de proyectos que entran.
+  await modalPrimary(page).click();
   await expect(page.locator('.toast').last()).toContainText('2 proyectos importados');
   await expect(rows).toHaveCount(4);
 });
