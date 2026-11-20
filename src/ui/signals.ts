@@ -2,7 +2,8 @@
 
 import { commit, project, renameSignalRefs, signalUsage, allRules } from '../state/store';
 import { exampleBlocks, exampleSignals } from '../data/example';
-import { TYPE_HINT, derivedSignals, presenceOwner, validateSignalName } from '../plc/signals';
+import { TYPE_HINT, derivedSignals, presenceOwner } from '../plc/signals';
+import { canMoveRefs, signalProblems } from '../plc/signalcheck';
 import type { Signal, SignalType } from '../types';
 import { confirmDialog, esc, h, icon, qs, toast } from './dom';
 import { signalMatches } from './search';
@@ -39,23 +40,17 @@ function isUsed(s: Signal): boolean {
   return [s.name, s.inductivoActivo, s.inductivoReposo].some((n) => !!n && signalUsage(n.trim()).length > 0);
 }
 
-function problems(signals: Signal[]): Map<number, string> {
-  const out = new Map<number, string>();
-  const allNames = signals.map((s) => s.name.trim());
-  const derived = new Set(derivedSignals(signals).map((d) => d.name));
-  signals.forEach((s, i) => {
-    const n = s.name.trim();
-    const v = validateSignalName(n);
-    if (v) out.set(i, v);
-    else if (allNames.indexOf(n) !== i) out.set(i, `«${n}» está repetido`);
-    else if (derived.has(n)) out.set(i, `«${n}» ya es el nombre de un inductivo`);
-    if (s.type === 'Cilindro') {
-      [s.inductivoActivo, s.inductivoReposo].forEach((ind) => {
-        if (ind && allNames.includes(ind) && !out.has(i)) out.set(i, `El inductivo «${ind}» coincide con otra señal`);
-      });
-    }
-  });
-  return out;
+/** Reglas que usan la señal o alguno de sus inductivos (sin repetir). */
+function usageWithInductivos(s: Signal, names: (string | undefined)[] = [s.name, s.inductivoActivo, s.inductivoReposo]) {
+  const seen = new Set<string>();
+  return names
+    .flatMap((n) => (n?.trim() ? signalUsage(n.trim()) : []))
+    .filter((u) => {
+      const k = `${u.block}\n${u.rule}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 }
 
 export function renderSignals(app: App): HTMLElement {
@@ -162,15 +157,16 @@ export function renderSignals(app: App): HTMLElement {
   };
 
   const refreshValidation = () => {
-    const probs = problems(p.signals);
+    const probs = signalProblems(p.signals);
     body.querySelectorAll<HTMLTableRowElement>('tr[data-i]').forEach((tr) => {
       const i = Number(tr.dataset.i);
-      const msg = probs.get(i);
+      const prob = probs.get(i);
       const err = tr.querySelector<HTMLElement>('.cell-error')!;
-      const input = tr.querySelector<HTMLInputElement>('[data-f="name"]')!;
-      err.textContent = msg ?? '';
-      err.hidden = !msg;
-      input.toggleAttribute('aria-invalid', !!msg);
+      err.textContent = prob?.text ?? '';
+      err.hidden = !prob;
+      (['name', 'inductivoActivo', 'inductivoReposo'] as const).forEach((f) =>
+        tr.querySelector<HTMLInputElement>(`input[data-f="${f}"]`)?.toggleAttribute('aria-invalid', prob?.field === f),
+      );
       const usage = signalUsage(p.signals[i].name.trim());
       tr.querySelector('.usage')!.innerHTML = usage.length
         ? `<span class="badge badge--neutral" title="${esc(usage.map((u) => `${u.block} › ${u.rule}`).join('\n'))}">${usage.length} regla${usage.length === 1 ? '' : 's'}</span>`
@@ -275,7 +271,6 @@ export function renderSignals(app: App): HTMLElement {
   const bindRow = (tr: HTMLTableRowElement) => {
     const i = Number(tr.dataset.i);
     const s = p.signals[i];
-    let committedName = s.name.trim();
 
     tr.querySelectorAll<HTMLInputElement>('input[data-f]').forEach((input) => {
       const f = input.dataset.f as 'name' | 'description' | 'inductivoActivo' | 'inductivoReposo';
@@ -285,19 +280,22 @@ export function renderSignals(app: App): HTMLElement {
         refreshValidation();
       });
       if (f === 'name' || f === 'inductivoActivo' || f === 'inductivoReposo') {
-        let before = input.value.trim();
-        input.addEventListener('focus', () => (before = input.value.trim()));
+        // Nombre al que apuntan ahora las reglas. Solo cambia cuando el
+        // renombrado se aplica: un nombre vacío, no válido u ocupado se queda
+        // en el campo (con su aviso) sin tocar las referencias, y al
+        // corregirlo se parte otra vez del último nombre bueno.
+        let committed = input.value.trim();
         input.addEventListener('change', () => {
           const after = input.value.trim();
-          const prev = f === 'name' ? committedName : before;
-          if (prev && after && prev !== after && !validateSignalName(after)) {
+          const prev = committed;
+          const move = canMoveRefs(p.signals, prev, after);
+          if (move) {
             const n = renameSignalRefs(prev, after);
             if (n) toast(`«${prev}» → «${after}»: ${n} referencia${n === 1 ? '' : 's'} actualizada${n === 1 ? '' : 's'} en las reglas.`, 'info');
             commit();
           }
-          const linked = f === 'name' && !!prev && prev !== after && (s.type === 'Cilindro' || p.signals.some((x) => x.presence === after));
-          if (f === 'name') committedName = after;
-          before = after;
+          if (move || !prev || prev === after) committed = after;
+          const linked = f === 'name' && move && (s.type === 'Cilindro' || p.signals.some((x) => x.presence === after));
           refreshValidation();
           if (linked) draw();
         });
@@ -315,8 +313,25 @@ export function renderSignals(app: App): HTMLElement {
       draw();
     });
 
-    qs<HTMLSelectElement>(tr, '[data-f="type"]').addEventListener('change', (e) => {
-      s.type = (e.target as HTMLSelectElement).value as SignalType;
+    qs<HTMLSelectElement>(tr, '[data-f="type"]').addEventListener('change', async (e) => {
+      const select = e.target as HTMLSelectElement;
+      const next = select.value as SignalType;
+      // Dejar de ser cilindro borra sus inductivos: se avisa si hay reglas que los usan.
+      const usage = s.type === 'Cilindro' && next !== 'Cilindro' ? usageWithInductivos(s, [s.inductivoActivo, s.inductivoReposo]) : [];
+      if (usage.length) {
+        const ok = await confirmDialog(
+          'Cambiar el tipo de un cilindro en uso',
+          `Al dejar de ser un cilindro, <strong>${esc(s.name)}</strong> pierde sus inductivos, que se usan en ${usage.length} regla${usage.length === 1 ? '' : 's'}:</p>
+           <ul class="modal__list">${usage.map((u) => `<li>${esc(u.block)} › ${esc(u.rule)}</li>`).join('')}</ul>
+           <p class="modal__text">Esas reglas quedarán marcadas como incompletas hasta que las corrijas.`,
+          { confirm: 'Cambiar igualmente', danger: true },
+        );
+        if (!ok) {
+          select.value = s.type;
+          return;
+        }
+      }
+      s.type = next;
       if (s.type !== 'Cilindro') {
         delete s.inductivoActivo;
         delete s.inductivoReposo;
@@ -337,11 +352,13 @@ export function renderSignals(app: App): HTMLElement {
     });
 
     qs(tr, '[data-f="delete"]').addEventListener('click', async () => {
-      const usage = signalUsage(s.name.trim());
+      // Con un cilindro se van también sus inductivos: cuentan las reglas que los usan.
+      const own = signalUsage(s.name.trim()).length;
+      const usage = s.type === 'Cilindro' ? usageWithInductivos(s) : signalUsage(s.name.trim());
       if (usage.length) {
         const ok = await confirmDialog(
           'Eliminar señal en uso',
-          `<strong>${esc(s.name)}</strong> se usa en ${usage.length} regla${usage.length === 1 ? '' : 's'}:</p>
+          `<strong>${esc(s.name)}</strong>${usage.length > own ? ' o sus inductivos se usan' : ' se usa'} en ${usage.length} regla${usage.length === 1 ? '' : 's'}:</p>
            <ul class="modal__list">${usage.map((u) => `<li>${esc(u.block)} › ${esc(u.rule)}</li>`).join('')}</ul>
            <p class="modal__text">Esas reglas quedarán marcadas como incompletas hasta que las corrijas.`,
           { confirm: 'Eliminar igualmente', danger: true },

@@ -51,8 +51,8 @@ export function openVersions(app: App): void {
         hint: 'Por ejemplo: «Antes de cambiar la descarga» o «Enviado al cliente».',
       });
       if (label === null) return;
-      saveNamedVersion(label);
-      toast('Versión guardada.');
+      if (saveNamedVersion(label)) toast('Versión guardada.');
+      else toast('No se pudo guardar la versión: el almacenamiento del navegador está lleno.', 'error', 5000);
       draw();
       return;
     }
@@ -105,6 +105,7 @@ export function openTrash(onChange: () => void): void {
     if (restore) {
       const p = restoreFromTrash(restore);
       if (p) toast(`«${p.name}» recuperado.`);
+      else toast('No se pudo recuperar: el almacenamiento del navegador está lleno. El proyecto sigue en la papelera.', 'error', 5000);
     } else if (purge) {
       const ok = await confirmDialog('Eliminar definitivamente', 'El proyecto y sus versiones se borrarán para siempre.', {
         confirm: 'Eliminar para siempre',

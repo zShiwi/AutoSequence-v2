@@ -8,15 +8,29 @@
  *   siguen apareciendo.
  */
 
-import type { Block, Cajetin, Project, Rule, Signal } from '../types';
+import type {
+  Action,
+  ActionValue,
+  Block,
+  Cajetin,
+  Condition,
+  ConditionEvent,
+  ConveyorLayout,
+  Project,
+  Rule,
+  Signal,
+  SignalType,
+} from '../types';
 import {
   buildFullBackup,
+  freeVersionSpace,
   markBackupDone,
   maybeSaveVersion,
   moveToTrash,
+  peekTrash,
   readVersion,
+  removeFromTrash,
   saveVersion,
-  takeFromTrash,
   type FullBackup,
 } from './backups';
 
@@ -53,52 +67,179 @@ function newId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function normalize(p: Project): Project {
-  const blocks: Block[] =
-    Array.isArray(p.blocks) && p.blocks.length
-      ? p.blocks.map((b) => ({ name: b.name || 'Bloque', rules: Array.isArray(b.rules) ? b.rules : [] }))
-      : [{ name: 'Bloque principal', rules: Array.isArray(p.rules) ? p.rules : [] }];
+// ---- Saneado de lo leído ---------------------------------------------------
+//
+// Lo guardado y lo importado puede venir de versiones antiguas, de otro equipo
+// o editado a mano. Antes de usarlo se deja con la forma que espera el resto de
+// la aplicación: lo que no se puede interpretar se descarta o toma un valor por
+// defecto, en vez de romper las vistas cada vez que se abre el proyecto.
+
+type Raw = Record<string, unknown>;
+
+const SIGNAL_TYPES: SignalType[] = ['Sensor', 'Motor', 'Cilindro', 'Virtual'];
+const EVENTS: ConditionEvent[] = ['Flanco ascendente', 'Flanco descendente', '==1', '==0'];
+const VALUES: ActionValue[] = ['0', '1', 'toggle'];
+
+function isObj(v: unknown): v is Raw {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function objects(v: unknown): Raw[] {
+  return Array.isArray(v) ? v.filter(isObj) : [];
+}
+
+function text(v: unknown, fallback = ''): string {
+  return typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : fallback;
+}
+
+function num(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+function texts(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function normalizeSignal(raw: Raw): Signal {
+  const s = {
+    ...raw,
+    name: text(raw.name),
+    type: SIGNAL_TYPES.includes(raw.type as SignalType) ? (raw.type as SignalType) : 'Sensor',
+    initial: Number(raw.initial) === 1 ? 1 : 0,
+    description: text(raw.description),
+  } as Signal;
+  (['inductivoActivo', 'inductivoReposo', 'presence'] as const).forEach((k) => {
+    if (typeof s[k] !== 'string' || !s[k]) delete s[k];
+  });
+  return s;
+}
+
+function normalizeRule(raw: Raw, fallbackId: number): Rule {
+  // Los ids antiguos se respetan tal cual; solo se inventa uno si falta.
+  const id = raw.id;
+  const hasId = (typeof id === 'number' && Number.isFinite(id)) || (typeof id === 'string' && id !== '');
   return {
-    ...p,
-    id: p.id || newId(),
-    name: String(p.name || 'Proyecto sin nombre'),
-    signals: (p.signals || []).map((s) => ({
-      ...s,
-      description: s.description ?? '',
-      initial: Number(s.initial) === 1 ? 1 : 0,
-    })),
-    blocks,
-    rules: blocks.flatMap((b) => b.rules),
-    cajetin: p.cajetin ?? {},
-    createdAt: p.createdAt ?? Date.now(),
-    updatedAt: p.updatedAt ?? Date.now(),
+    ...raw,
+    id: hasId ? (id as number) : fallbackId,
+    name: text(raw.name),
+    conditions: objects(raw.conditions).map(
+      (c): Condition => ({
+        ...c,
+        signal: text(c.signal),
+        event: EVENTS.includes(c.event as ConditionEvent) ? (c.event as ConditionEvent) : '==1',
+        delay: num(c.delay, 0),
+        operator: c.operator === 'OR' ? 'OR' : 'AND',
+      }),
+    ),
+    actions: objects(raw.actions).map((a): Action => {
+      const value = text(a.value) as ActionValue;
+      // Igual que el simulador: lo que no es «1» ni «alternar» es un RESET.
+      return { ...a, signal: text(a.signal), value: VALUES.includes(value) ? value : '0' };
+    }),
   };
 }
 
-export function loadProjects(): Project[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    if (!Array.isArray(raw)) return [];
-    const projects = raw.map(normalize);
-    // Proyectos del prototipo original: no tenían id. Se fija y se guarda
-    // la primera vez para que el id sea estable entre lecturas.
-    if (raw.some((p: Partial<Project>) => !p?.id)) writeProjects(projects);
-    return projects;
-  } catch {
-    return [];
-  }
+function normalizeLayout(raw: unknown): ConveyorLayout | undefined {
+  if (!isObj(raw)) return undefined;
+  return {
+    ...raw,
+    stops: objects(raw.stops).filter((t) => typeof t.cylinder === 'string'),
+    sensors: objects(raw.sensors).filter((x) => typeof x.signal === 'string' && typeof x.ref === 'string'),
+    stations: objects(raw.stations)
+      .filter((st) => typeof st.stop === 'string')
+      .map((st) => ({ ...st, okSensors: texts(st.okSensors), nokSensors: texts(st.nokSensors) })),
+  } as unknown as ConveyorLayout;
 }
 
-function writeProjects(projects: Project[]): boolean {
+function normalize(p: Project): Project {
+  const raw = p as unknown as Raw;
+  let nextId = Date.now();
+  const rules = (list: unknown): Rule[] => objects(list).map((r) => normalizeRule(r, nextId++));
+  const rawBlocks = objects(raw.blocks);
+  const blocks: Block[] = rawBlocks.length
+    ? rawBlocks.map((b) => ({ ...b, name: text(b.name) || 'Bloque', rules: rules(b.rules) }))
+    : [{ name: 'Bloque principal', rules: rules(raw.rules) }];
+  const layout = normalizeLayout(raw.layout);
+  const out: Project = {
+    ...p,
+    id: text(raw.id) || newId(),
+    name: text(raw.name).trim() || 'Proyecto sin nombre',
+    signals: objects(raw.signals).map(normalizeSignal),
+    blocks,
+    rules: blocks.flatMap((b) => b.rules),
+    cajetin: isObj(raw.cajetin) ? (raw.cajetin as Partial<Cajetin>) : {},
+    createdAt: num(raw.createdAt, Date.now()),
+    updatedAt: num(raw.updatedAt, Date.now()),
+  };
+  if (layout) out.layout = layout;
+  else delete out.layout;
+  return out;
+}
+
+/**
+ * Resultado de la última lectura del almacenamiento. Lo usa `writeProjects`
+ * para no escribir nunca encima de algo que no se ha podido leer.
+ */
+const lastRead: { ok: boolean; kept: unknown[] } = { ok: true, kept: [] };
+
+export function loadProjects(): Project[] {
+  lastRead.ok = true;
+  lastRead.kept = [];
+  let raw: unknown;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    raw = undefined;
+  }
+  if (!Array.isArray(raw)) {
+    lastRead.ok = false;
+    return [];
+  }
+  const projects: Project[] = [];
+  let migrate = false;
+  raw.forEach((entry: unknown) => {
+    // Una entrada dañada no arrastra a las demás: se salta y se conserva.
+    if (!isObj(entry)) return;
+    try {
+      projects.push(normalize(entry as unknown as Project));
+      if (!entry.id) migrate = true;
+    } catch {
+      lastRead.kept.push(entry);
+    }
+  });
+  // Proyectos del prototipo original: no tenían id. Se fija y se guarda
+  // la primera vez para que el id sea estable entre lecturas.
+  if (migrate) writeProjects(projects);
+  return projects;
+}
+
+/**
+ * Si lo guardado no se pudo leer (JSON roto), se aparta en otra clave antes de
+ * escribir encima; así se puede recuperar a mano.
+ */
+function rescueUnreadable(): boolean {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) localStorage.setItem(`${STORAGE_KEY}_danado_${Date.now()}`, raw);
     return true;
   } catch {
     return false;
   }
 }
 
-function upsert(project: Project): boolean {
+/** Escribe la lista leída con `loadProjects` (hay que llamarla justo antes). */
+function writeProjects(projects: Project[]): boolean {
+  if (!lastRead.ok && !rescueUnreadable()) return false;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...projects, ...lastRead.kept]));
+    lastRead.ok = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function upsertOnce(project: Project): boolean {
   const projects = loadProjects();
   const idx = projects.findIndex((p) => p.id === project.id);
   const clean: Project = { ...project, rules: project.blocks.flatMap((b) => b.rules) };
@@ -106,6 +247,19 @@ function upsert(project: Project): boolean {
   else projects.push(clean);
   return writeProjects(projects);
 }
+
+/**
+ * Guarda el proyecto. Si no cabe, libera versiones automáticas antiguas y
+ * reintenta: el trabajo actual vale más que una instantánea vieja.
+ */
+function upsert(project: Project): boolean {
+  if (upsertOnce(project)) return true;
+  while (freeVersionSpace()) if (upsertOnce(project)) return true;
+  return false;
+}
+
+const STORAGE_FULL =
+  'No se pudo guardar: el almacenamiento del navegador está lleno. Exporta una copia de seguridad y elimina proyectos o versiones que no necesites.';
 
 // ---- Operaciones de la lista de proyectos ---------------------------------
 
@@ -130,26 +284,44 @@ export function createProject(
     cajetin: seed.cajetin ?? {},
     ...(seed.layout ? { layout: seed.layout } : {}),
   });
-  upsert(project);
+  if (!upsert(project)) return { ok: false, error: STORAGE_FULL };
   return { ok: true, project };
 }
 
-/** Mueve el proyecto a la papelera (recuperable durante TRASH_DAYS días). */
-export function deleteProject(id: string): void {
-  const all = loadProjects();
+/**
+ * Mueve el proyecto a la papelera (recuperable durante TRASH_DAYS días).
+ * Devuelve false, sin borrar nada, si no se pudo guardar en la papelera.
+ */
+export function deleteProject(id: string): boolean {
+  let all = loadProjects();
   const p = all.find((x) => x.id === id);
-  if (p) moveToTrash(p);
-  writeProjects(all.filter((x) => x.id !== id));
+  if (!p) return true;
+  if (!moveToTrash(p)) return false;
+  all = loadProjects();
+  if (writeProjects(all.filter((x) => x.id !== id))) return true;
+  removeFromTrash(id);
+  return false;
 }
 
+/**
+ * Recupera un proyecto de la papelera. Solo sale de ella cuando ya está
+ * guardado en la lista; si no se pudo guardar devuelve null y sigue allí.
+ */
 export function restoreFromTrash(id: string): Project | null {
-  const p = takeFromTrash(id);
+  const p = peekTrash(id);
   if (!p) return null;
-  let name = p.name;
-  let n = 2;
-  while (nameTaken(name)) name = `${p.name} (${n++})`;
-  const restored = normalize({ ...p, name });
-  upsert(restored);
+  let restored: Project;
+  try {
+    const base = normalize(p);
+    let name = base.name;
+    let n = 2;
+    while (nameTaken(name)) name = `${base.name} (${n++})`;
+    restored = { ...base, name };
+  } catch {
+    return null;
+  }
+  if (!upsert(restored)) return null;
+  removeFromTrash(id);
   return restored;
 }
 
@@ -162,7 +334,9 @@ export function exportAllJSON(): string {
 }
 
 /** Importa un proyecto exportado o una copia completa de varios. */
-export function importFile(json: string): { ok: true; imported: Project[] } | { ok: false; error: string } {
+export function importFile(
+  json: string,
+): { ok: true; imported: Project[]; skipped: number } | { ok: false; error: string } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -172,15 +346,24 @@ export function importFile(json: string): { ok: true; imported: Project[] } | { 
   const backup = data as Partial<FullBackup>;
   if (backup && backup.format === 'autosequence-backup' && Array.isArray(backup.projects)) {
     const imported: Project[] = [];
+    let skipped = 0;
+    let full = false;
     for (const p of backup.projects) {
-      const r = importProject(JSON.stringify(p));
+      // Un proyecto que no se puede importar no corta la copia: se salta.
+      const r = importProject(JSON.stringify(p ?? null));
       if (r.ok) imported.push(r.project);
+      else {
+        skipped++;
+        full ||= r.error === STORAGE_FULL;
+      }
     }
-    if (!imported.length) return { ok: false, error: 'La copia de seguridad no contiene proyectos válidos.' };
-    return { ok: true, imported };
+    if (!imported.length) {
+      return { ok: false, error: full ? STORAGE_FULL : 'La copia de seguridad no contiene proyectos válidos.' };
+    }
+    return { ok: true, imported, skipped };
   }
   const r = importProject(json);
-  return r.ok ? { ok: true, imported: [r.project] } : r;
+  return r.ok ? { ok: true, imported: [r.project], skipped: 0 } : r;
 }
 
 export function duplicateProject(id: string): Project | null {
@@ -196,8 +379,7 @@ export function duplicateProject(id: string): Project | null {
     createdAt: undefined,
     updatedAt: undefined,
   });
-  upsert(copy);
-  return copy;
+  return upsert(copy) ? copy : null;
 }
 
 /** Valida y añade un proyecto importado desde JSON. */
@@ -212,11 +394,17 @@ export function importProject(json: string): { ok: true; project: Project } | { 
   if (!p || typeof p !== 'object' || !Array.isArray(p.signals) || typeof p.name !== 'string') {
     return { ok: false, error: 'El archivo no parece un proyecto de AutoSequence (faltan «name» o «signals»).' };
   }
-  let name = p.name;
-  let n = 2;
-  while (nameTaken(name)) name = `${p.name} (${n++})`;
-  const project = normalize({ ...(p as Project), id: undefined, name });
-  upsert(project);
+  let project: Project;
+  try {
+    const base = p.name.trim() || 'Proyecto sin nombre';
+    let name = base;
+    let n = 2;
+    while (nameTaken(name)) name = `${base} (${n++})`;
+    project = normalize({ ...(p as Project), id: undefined, name });
+  } catch {
+    return { ok: false, error: 'El archivo está dañado y no se puede importar.' };
+  }
+  if (!upsert(project)) return { ok: false, error: STORAGE_FULL };
   return { ok: true, project };
 }
 
@@ -354,10 +542,10 @@ export function flushSave(): void {
 }
 
 /** Guarda ahora una versión con nombre del proyecto abierto. */
-export function saveNamedVersion(label: string): void {
-  if (!session.project) return;
+export function saveNamedVersion(label: string): boolean {
+  if (!session.project) return false;
   flushSave();
-  saveVersion(session.project, label);
+  return saveVersion(session.project, label);
 }
 
 /**
