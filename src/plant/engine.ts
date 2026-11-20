@@ -86,7 +86,9 @@ export class Plant {
     this.layout = layout;
     this.rules = rules;
     this.L = loopLength(layout);
-    this.sim = new Simulator(signals, rules, { externalDerived: true });
+    // La planta mueve los inductivos de los topes; los de los demás
+    // cilindros (pinzas, elevadores…) siguen a su cilindro en el simulador.
+    this.sim = new Simulator(signals, rules, { externalDerived: layout.stops.map((t) => t.cylinder) });
     const bySignal = new Map(signals.map((s) => [s.name, s]));
 
     this.stopPos = layout.stops.map((t) => {
