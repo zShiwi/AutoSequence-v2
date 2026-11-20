@@ -240,7 +240,13 @@ export function renderSimulation(app: App): HTMLElement {
     const k = tag.dataset.fx;
     tag.classList.add('is-active');
     host.querySelector(`.fx-link[data-fx="${k}"]`)?.classList.add('is-active');
-    tip.innerHTML = `<strong>${tag.dataset.tipTitle ?? ''}</strong><span>${tag.dataset.tipBody ?? ''}</span>`;
+    // `dataset` devuelve el texto ya sin escapar (nombres de regla y de
+    // señal, que pueden venir de un archivo importado): nunca como HTML.
+    const title = document.createElement('strong');
+    title.textContent = tag.dataset.tipTitle ?? '';
+    const detail = document.createElement('span');
+    detail.textContent = tag.dataset.tipBody ?? '';
+    tip.replaceChildren(title, detail);
     tip.hidden = false;
     // A la derecha de la etiqueta: la causa siempre queda a la izquierda
     // (ocurre antes o en el mismo ciclo), así la ficha no tapa la línea.
