@@ -6,7 +6,7 @@ import { TYPE_HINT, derivedSignals, presenceOwner } from '../plc/signals';
 import { canMoveRefs, signalProblems } from '../plc/signalcheck';
 import type { Signal, SignalType } from '../types';
 import { confirmDialog, esc, h, icon, qs, toast } from './dom';
-import { signalMatches } from './search';
+import { oneLine, signalMatches } from './search';
 import type { App } from './app';
 import { openQuickAdd, quickAddBar, type QuickKind } from './quickadd';
 
@@ -198,14 +198,14 @@ export function renderSignals(app: App): HTMLElement {
     body.innerHTML = `
       <div class="card card--flush">
         <div class="table-scroll">
-          <table class="table table--edit">
+          <table class="table table--edit table--signals">
             <thead><tr>
-              <th style="width:22%">Nombre</th>
-              <th style="width:15%">Tipo</th>
-              <th style="width:8%">Inicial</th>
+              <th class="col-name">Nombre</th>
+              <th class="col-type">Tipo</th>
+              <th class="col-init">Inicial</th>
               <th>Descripción</th>
-              <th style="width:20%">Inductivos de posición</th>
-              <th style="width:8%">Uso</th>
+              <th class="col-ind" title="Inductivos de posición y sensor de presencia de cada cilindro">Inductivos</th>
+              <th class="col-use">Uso</th>
               <th class="actions"><span class="sr-only">Eliminar</span></th>
             </tr></thead>
             <tbody>
@@ -227,7 +227,7 @@ export function renderSignals(app: App): HTMLElement {
                   <td>
                     <button class="bit${s.initial ? ' bit--on' : ''}" data-f="initial" aria-pressed="${s.initial === 1}" title="Estado al arrancar">${s.initial}</button>
                   </td>
-                  <td><input class="input" data-f="description" value="${esc(s.description)}" placeholder="Función de la señal" aria-label="Descripción" /></td>
+                  <td><textarea class="input input--area" data-f="description" rows="1" placeholder="Función de la señal" aria-label="Descripción" title="${esc(s.description)}">${esc(s.description)}</textarea></td>
                   <td>
                     ${
                       s.type === 'Cilindro'
@@ -266,19 +266,43 @@ export function renderSignals(app: App): HTMLElement {
     body.querySelectorAll<HTMLTableRowElement>('tr[data-i]').forEach((tr) => bindRow(tr));
     refreshValidation();
     applyFilters();
+    resizeAreas();
   };
+
+  /** Ajusta la altura de las descripciones (al pintar y al cambiar el ancho). */
+  const resizeAreas = () => {
+    if (FIELD_SIZING) return;
+    requestAnimationFrame(() => body.querySelectorAll<HTMLTextAreaElement>('textarea.input--area').forEach(autosize));
+  };
+  if (!FIELD_SIZING && typeof ResizeObserver !== 'undefined') new ResizeObserver(resizeAreas).observe(body);
 
   const bindRow = (tr: HTMLTableRowElement) => {
     const i = Number(tr.dataset.i);
     const s = p.signals[i];
 
-    tr.querySelectorAll<HTMLInputElement>('input[data-f]').forEach((input) => {
+    tr.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[data-f], textarea[data-f]').forEach((input) => {
       const f = input.dataset.f as 'name' | 'description' | 'inductivoActivo' | 'inductivoReposo';
       input.addEventListener('input', () => {
+        if (f === 'description') {
+          // La descripción es una sola línea (va a comentarios del AWL y al CSV):
+          // el campo crece para verla entera, pero no admite saltos de línea.
+          const flat = oneLine(input.value);
+          if (flat !== input.value) input.value = flat;
+          input.title = flat;
+          autosize(input as HTMLTextAreaElement);
+        }
         (s as unknown as Record<string, string>)[f] = f === 'description' ? input.value : input.value.trim();
         commit();
         refreshValidation();
       });
+      if (f === 'description') {
+        input.addEventListener('keydown', (e) => {
+          if ((e as KeyboardEvent).key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          }
+        });
+      }
       if (f === 'name' || f === 'inductivoActivo' || f === 'inductivoReposo') {
         // Nombre al que apuntan ahora las reglas. Solo cambia cuando el
         // renombrado se aplica: un nombre vacío, no válido u ocupado se queda
@@ -455,6 +479,16 @@ export function renderSignals(app: App): HTMLElement {
 
   draw();
   return page;
+}
+
+/** El navegador ajusta solo la altura del campo al contenido (CSS field-sizing). */
+const FIELD_SIZING = typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content');
+
+/** Altura del campo según su contenido, donde el navegador no lo hace solo. */
+function autosize(ta: HTMLTextAreaElement): void {
+  if (FIELD_SIZING || !ta.offsetParent) return;
+  ta.style.height = 'auto';
+  ta.style.height = `${ta.scrollHeight + 2}px`;
 }
 
 /** Opciones del selector de presencia de un tope: sensores existentes. */

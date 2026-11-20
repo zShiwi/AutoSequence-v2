@@ -78,6 +78,8 @@ test('importar una copia con proyectos dañados: se importan los buenos y nada s
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
+  // Antes de importar se confirma la lista de proyectos que entran.
+  await modalPrimary(page).click();
   await expect(page.locator('.toast').last()).toContainText('2 proyectos importados. 2 no se pudieron importar.');
   await expect(page.locator('.table--projects tbody tr')).toHaveCount(2);
 

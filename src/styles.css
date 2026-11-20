@@ -72,6 +72,7 @@
   --shadow: 0 1px 2px rgba(22, 33, 43, 0.06), 0 1px 1px rgba(22, 33, 43, 0.04);
   --shadow-lg: 0 18px 48px rgba(10, 20, 30, 0.22), 0 2px 6px rgba(10, 20, 30, 0.1);
   --focus: 0 0 0 3px rgba(31, 78, 121, 0.28);
+  --focus-line: #1f4e79;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -120,6 +121,7 @@
     --lad-frame: #2a3743;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     --focus: 0 0 0 3px rgba(106, 166, 220, 0.4);
+    --focus-line: #8dbbe6;
   }
 }
 
@@ -168,6 +170,7 @@
   --lad-frame: #2a3743;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --focus: 0 0 0 3px rgba(106, 166, 220, 0.4);
+  --focus-line: #8dbbe6;
 }
 
 :root[data-theme='light'] {
@@ -220,9 +223,11 @@ button {
   color: inherit;
 }
 
+/* Foco de teclado: el mismo anillo en toda la app. Los campos de texto
+   (.input, .searchbox) lo cambian por borde y halo. */
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus);
+  outline: 2px solid var(--focus-line);
+  outline-offset: 2px;
 }
 
 .sr-only {
@@ -4332,5 +4337,295 @@ kbd {
   .table--edit:not(.table--plant) td:nth-child(5):has(> .muted:only-child),
   .table--edit:not(.table--plant) td:nth-child(5):has(> .badge:only-child) {
     padding-top: 14px;
+  }
+}
+
+/* ==========================================================================
+   Segunda tanda · UX general
+   ========================================================================== */
+
+/* ---- Foco visible coherente ------------------------------------------------ */
+
+/* Sobre las superficies siempre oscuras (barra superior, avisos) el anillo
+   azul oscuro del tema claro no se veía. */
+.topbar,
+.toast {
+  --focus-line: #9cc6ee;
+}
+
+.chip__sig:focus-visible,
+.quickadd__btn:focus-visible {
+  outline: 2px solid var(--focus-line);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+/* Dentro de contenedores que recortan, el anillo va por dentro. */
+.step:focus-visible,
+.tab:focus-visible,
+.link-cell:focus-visible,
+.sheet-card__preview:focus-visible,
+.io__switch:focus-visible,
+.stat--btn:focus-visible,
+.fchip:focus-visible,
+.rule:focus-visible,
+[role='radio']:focus-visible,
+[role='tab']:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---- Barra superior --------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  /* Sin teclado físico la ayuda de atajos no aporta y la barra va justa. */
+  .topbar__help {
+    display: none;
+  }
+}
+
+/* ---- Panel de atajos de teclado -------------------------------------------- */
+
+.modal--shortcuts {
+  width: min(620px, 100%);
+}
+
+.shortcuts {
+  display: grid;
+  gap: 16px;
+}
+
+.shortcuts__group h3 {
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.shortcuts dl {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.shortcuts__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shortcuts__row:last-child {
+  border-bottom: 0;
+}
+
+.shortcuts dt {
+  color: var(--ink);
+}
+
+.shortcuts dd {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.keys__plus,
+.keys__or {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.shortcuts kbd,
+.modal__text kbd {
+  color: var(--ink);
+}
+
+.shortcuts kbd {
+  min-width: 22px;
+  padding: 2px 6px;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .shortcuts__row {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---- Confirmación de importación -------------------------------------------- */
+
+.import-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.import-preview__group h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.import-preview__group h3 .ico {
+  color: var(--ok);
+}
+
+.import-preview__group--bad h3 .ico {
+  color: var(--warn);
+}
+
+.import-preview__list {
+  max-height: 34vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.import-preview__list li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.import-preview__list li:last-child {
+  border-bottom: 0;
+}
+
+.import-preview__list li.is-renamed {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.import-preview__group--bad .import-preview__list li {
+  box-shadow: inset 3px 0 0 var(--err);
+}
+
+.import-preview__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-preview__old {
+  color: var(--ink-3);
+  text-decoration: line-through;
+}
+
+.import-preview__arrow {
+  color: var(--ink-3);
+}
+
+.import-preview__why {
+  color: var(--warn);
+}
+
+/* ---- Proyectos: buscador ---------------------------------------------------- */
+
+.filterbar--home {
+  margin-bottom: 12px;
+}
+
+/* ---- Señales: descripción entera e inductivos más estrechos ---------------- */
+
+/* Campo de varias líneas que crece con su contenido. */
+textarea.input--area {
+  display: block;
+  height: auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  line-height: 20px;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  field-sizing: content;
+}
+
+@media (min-width: 641px) {
+  .table--signals .col-name {
+    width: 21%;
+  }
+
+  .table--signals .col-type {
+    width: 13%;
+  }
+
+  .table--signals .col-init {
+    width: 68px;
+  }
+
+  .table--signals .col-ind {
+    width: 176px;
+  }
+
+  .table--signals .col-use {
+    width: 84px;
+  }
+
+  .table--signals .ind-pair label {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 5px;
+  }
+}
+
+/* ---- Avisos emergentes ------------------------------------------------------- */
+
+.toasts {
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Se cierran al tocarlos (el contenedor sigue dejando pasar los clics). La
+   franja de color es recta y el borde los separa del fondo en tema oscuro. */
+.toast {
+  color: var(--topbar-ink);
+  background-color: var(--topbar);
+  background-image: linear-gradient(to right, var(--toast-bar, var(--ok)) 3px, transparent 3px);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), var(--shadow-lg);
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  .toasts {
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    gap: 6px;
+  }
+
+  /* Con un diálogo abierto, los avisos van arriba: abajo taparían sus botones. */
+  body:has(.modal-backdrop) .toasts {
+    top: calc(8px + env(safe-area-inset-top, 0px));
+    bottom: auto;
+  }
+
+  /* Mientras hay avisos, la página deja ese hueco al final: lo que queda al
+     pie (botones de «Continuar») se puede subir por encima del aviso. */
+  .shell {
+    padding-bottom: var(--toast-space, 0px);
   }
 }
