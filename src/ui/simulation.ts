@@ -10,6 +10,7 @@ import { ruleLabeler, type RuleLabeler } from '../plc/rules';
 import type { WaveRow } from '../diagram/wave';
 import type { App } from './app';
 import { renderPlant } from './plant';
+import { watchScrollEdges } from './scrolledges';
 import type { SimStep } from '../types';
 
 type Mode = 'auto' | 'manual' | 'plant';
@@ -63,9 +64,9 @@ export function renderSimulation(app: App): HTMLElement {
         </div>
         <div class="page-head__actions">
           <div class="segmented" role="radiogroup" aria-label="Modo de simulación">
-            <button role="radio" data-mode="auto">${icon('play', 15)}Escenario automático</button>
-            <button role="radio" data-mode="manual">${icon('pulse', 15)}Panel manual</button>
-            <button role="radio" data-mode="plant">${icon('conveyor', 15)}Transportador</button>
+            <button role="radio" data-mode="auto" aria-label="Escenario automático">${icon('play', 15)}<span class="lbl-long">Escenario automático</span><span class="lbl-short">Auto</span></button>
+            <button role="radio" data-mode="manual" aria-label="Panel manual">${icon('pulse', 15)}<span class="lbl-long">Panel manual</span><span class="lbl-short">Manual</span></button>
+            <button role="radio" data-mode="plant" aria-label="Transportador">${icon('conveyor', 15)}<span class="lbl-long">Transportador</span><span class="lbl-short">Transp.</span></button>
           </div>
         </div>
       </header>
@@ -203,6 +204,7 @@ export function renderSimulation(app: App): HTMLElement {
             links: ui.allLinks ? 'all' : 'hover',
             ruleLabel,
             highlightStep: manual ? v.history.length - 1 : undefined,
+            compact: window.innerWidth <= 640,
           })}<div class="fx-tip" role="tooltip" hidden></div></div>
           ${
             manual
@@ -224,6 +226,7 @@ export function renderSimulation(app: App): HTMLElement {
     if (manual) {
       body.querySelectorAll<HTMLElement>('.diagram-scroll').forEach((s) => (s.scrollLeft = s.scrollWidth));
     }
+    watchScrollEdges(body, '.diagram-scroll');
     // Guardar las vistas para la descarga SVG.
     lastViews = list;
   };

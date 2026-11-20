@@ -40,7 +40,12 @@ const ui = {
   signature: '',
   view: '3d' as '3d' | 'plan',
   labels: true,
+  /** El editor se acaba de abrir: hay que llevarlo a la vista. */
+  reveal: false,
+  /** La simulación estaba en marcha al abrir el editor y se reanuda al cerrarlo. */
+  resume: false,
 };
+
 
 const SPEEDS = [1, 2, 5, 10];
 const palletCount = (pl: Plant) => (pl.pending ? `${pl.pallets.length}+${pl.pending}` : String(pl.pallets.length));
@@ -162,12 +167,16 @@ export function renderPlant(app: App): HTMLElement {
   } else showPlan();
 
   if (ui.editing) {
-    qs(root, '[data-slot="editor"]').appendChild(
-      layoutEditor(layout, signals, issues, () => {
-        commit();
-        app.refresh();
-      }),
-    );
+    const editor = layoutEditor(layout, signals, issues, () => {
+      commit();
+      app.refresh();
+    });
+    qs(root, '[data-slot="editor"]').appendChild(editor);
+    if (ui.reveal) {
+      // El editor queda debajo de la vista: se lleva a la pantalla al abrirlo.
+      ui.reveal = false;
+      requestAnimationFrame(() => editor.isConnected && editor.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
   }
 
   // ---- Controles ------------------------------------------------------------
@@ -212,6 +221,7 @@ export function renderPlant(app: App): HTMLElement {
       });
     } else if (act === 'run') {
       ui.running = !ui.running;
+      ui.resume = false;
       const b = t.closest<HTMLElement>('[data-pl]')!;
       b.innerHTML = `${icon(ui.running ? 'pause' : 'play', 15)}<span>${ui.running ? 'Pausa' : 'Iniciar'}</span>`;
     } else if (act === 'reset') {
@@ -220,7 +230,15 @@ export function renderPlant(app: App): HTMLElement {
       toast('Transportador reiniciado.', 'info', 1600);
     } else if (act === 'edit') {
       ui.editing = !ui.editing;
-      if (ui.editing) ui.running = false;
+      if (ui.editing) {
+        ui.reveal = true;
+        ui.resume = ui.running && !!plant;
+        ui.running = false;
+        if (ui.resume) toast('Simulación en pausa mientras editas. Se reanuda al cerrar el editor.', 'info', 2600);
+      } else if (ui.resume) {
+        ui.resume = false;
+        ui.running = true;
+      }
       app.refresh();
     } else if (tog && plant) {
       plant.setManual(tog, plant.sim.states[tog] === 1 ? 0 : 1);
@@ -281,8 +299,11 @@ export function renderPlant(app: App): HTMLElement {
         .filter((x) => targets.has(x.name))
         .map((x) => {
           const on = st[x.name] === 1;
-          const word = x.type === 'Cilindro' ? (on ? 'Abre' : 'Cierra') : on ? '1' : '0';
-          return `<div class="io io--output${on ? ' is-on' : ''}" title="${esc(x.description)}"><span class="lamp"></span><code>${esc(x.name)}</code><span class="io__val">${word}</span></div>`;
+          const val =
+            x.type === 'Cilindro'
+              ? `<span class="io__pill io__pill--${on ? 'open' : 'closed'}">${on ? 'Abre' : 'Cierra'}</span>`
+              : `<span class="io__val">${on ? '1' : '0'}</span>`;
+          return `<div class="io io--output${on ? ' is-on' : ''}" title="${esc(x.description)}"><span class="lamp"></span><code>${esc(x.name)}</code>${val}</div>`;
         })
         .join('')}</div>`,
     );
@@ -484,18 +505,18 @@ function layoutEditor(
       </div>
 
       <h3 class="plant-editor__title">Topes <span class="muted small">· los inductivos de activo/reposo y el sensor de presencia van en el propio tope</span></h3>
-      <div class="table-scroll"><table class="table table--edit table--plant">
+      <div class="table-scroll"><table class="table table--edit table--plant table--cards">
         <thead><tr><th>Cilindro</th><th>Presencia en el tope</th><th>Línea</th><th>Distancia desde el extremo izquierdo</th><th>Tiempo cilindro</th><th class="actions"></th></tr></thead>
         <tbody data-group="stops">${layout.stops
           .map((t, i) => {
             const sig = sigByName.get(t.cylinder);
             const ind = sig ? [sig.inductivoActivo, sig.inductivoReposo].filter(Boolean).join(' / ') : '';
             return `<tr data-i="${i}">
-              <td><select class="input input--mono" data-f="cylinder">${opt(cylinders, t.cylinder)}</select>${ind ? `<span class="cell-hint">Inductivos: ${esc(ind)}</span>` : ''}</td>
-              <td><select class="input input--mono" data-f="presence">${opt(sensors, t.presence, '—')}</select></td>
-              <td><select class="input" data-f="line">${lineOpt(t.line)}</select></td>
-              <td><span class="input-unit"><input class="input" type="number" step="any" data-f="x" value="${t.x}" /><span>mm</span></span></td>
-              <td><span class="input-unit"><input class="input" type="number" min="1" step="any" data-f="travelMs" value="${t.travelMs}" /><span>ms</span></span></td>
+              <td data-label="Cilindro"><select class="input input--mono" data-f="cylinder">${opt(cylinders, t.cylinder)}</select>${ind ? `<span class="cell-hint">Inductivos: ${esc(ind)}</span>` : ''}</td>
+              <td data-label="Presencia en el tope"><select class="input input--mono" data-f="presence">${opt(sensors, t.presence, '—')}</select></td>
+              <td data-label="Línea"><select class="input" data-f="line">${lineOpt(t.line)}</select></td>
+              <td data-label="Distancia desde el extremo izquierdo"><span class="input-unit"><input class="input" type="number" step="any" data-f="x" value="${t.x}" /><span>mm</span></span></td>
+              <td data-label="Tiempo cilindro"><span class="input-unit"><input class="input" type="number" min="1" step="any" data-f="travelMs" value="${t.travelMs}" /><span>ms</span></span></td>
               <td class="actions"><button class="icon-btn icon-btn--danger" data-del="stops" aria-label="Quitar tope">${icon('trash', 16)}</button></td>
             </tr>`;
           })
@@ -504,30 +525,30 @@ function layoutEditor(
       <button class="btn btn--ghost btn--sm" data-add="stops">${icon('plus', 15)}<span>Añadir tope</span></button>
 
       <h3 class="plant-editor__title">Sensores de línea <span class="muted small">· paso de paleta, acumulación máxima… por su distancia a un tope</span></h3>
-      <div class="table-scroll"><table class="table table--edit table--plant">
+      <div class="table-scroll"><table class="table table--edit table--plant table--cards">
         <thead><tr><th>Sensor</th><th>Tipo</th><th>Referencia</th><th>Posición</th><th>Distancia</th><th class="actions"></th></tr></thead>
         <tbody data-group="sensors">${layout.sensors
           .map((x, i) => {
             const isLeft = x.ref === 'left';
             const refVal = isLeft ? `left:${x.line ?? 'bottom'}` : x.ref;
             return `<tr data-i="${i}">
-              <td><select class="input input--mono" data-f="signal">${opt(sensors, x.signal)}</select></td>
-              <td><select class="input" data-f="role">
+              <td data-label="Sensor"><select class="input input--mono" data-f="signal">${opt(sensors, x.signal)}</select></td>
+              <td data-label="Tipo"><select class="input" data-f="role">
                 <option value="paso"${x.role === 'paso' ? ' selected' : ''}>Paso de paleta</option>
                 <option value="acumulacion"${x.role === 'acumulacion' ? ' selected' : ''}>Acumulación máxima</option>
                 <option value="otro"${x.role === 'otro' ? ' selected' : ''}>Otro</option>
               </select></td>
-              <td><select class="input" data-f="ref">
+              <td data-label="Referencia"><select class="input" data-f="ref">
                 ${layout.stops.map((t) => `<option value="${esc(t.cylinder)}"${refVal === t.cylinder ? ' selected' : ''}>Tope ${esc(t.cylinder)}</option>`).join('')}
                 <option value="left:bottom"${refVal === 'left:bottom' ? ' selected' : ''}>Extremo izquierdo · abajo</option>
                 <option value="left:top"${refVal === 'left:top' ? ' selected' : ''}>Extremo izquierdo · arriba</option>
               </select></td>
-              <td>${
+              <td data-label="Posición">${
                 isLeft
                   ? '<span class="muted small">desde el extremo</span>'
                   : `<select class="input" data-f="side"><option value="before"${x.offset < 0 ? ' selected' : ''}>Antes del tope</option><option value="after"${x.offset >= 0 ? ' selected' : ''}>Después del tope</option></select>`
               }</td>
-              <td><span class="input-unit"><input class="input" type="number" min="0" step="any" data-f="dist" value="${Math.abs(x.offset)}" /><span>mm</span></span></td>
+              <td data-label="Distancia"><span class="input-unit"><input class="input" type="number" min="0" step="any" data-f="dist" value="${Math.abs(x.offset)}" /><span>mm</span></span></td>
               <td class="actions"><button class="icon-btn icon-btn--danger" data-del="sensors" aria-label="Quitar sensor">${icon('trash', 16)}</button></td>
             </tr>`;
           })
@@ -536,18 +557,18 @@ function layoutEditor(
       <button class="btn btn--ghost btn--sm" data-add="sensors"${layout.stops.length ? '' : ' disabled'}>${icon('plus', 15)}<span>Añadir sensor</span></button>
 
       <h3 class="plant-editor__title">Estaciones <span class="muted small">· robot u operario que trabaja con la paleta parada en un tope</span></h3>
-      <div class="table-scroll"><table class="table table--edit table--plant">
+      <div class="table-scroll"><table class="table table--edit table--plant table--cards">
         <thead><tr><th>Tope</th><th>Nombre</th><th>Trabajo</th><th>Señal al terminar</th><th>Pieza OK (=1)</th><th>Pieza NOK (=0)</th><th>Tiempo</th><th class="actions"></th></tr></thead>
         <tbody data-group="stations">${layout.stations
           .map(
             (st, i) => `<tr data-i="${i}">
-              <td><select class="input input--mono" data-f="stop">${layout.stops.map((t) => `<option value="${esc(t.cylinder)}"${st.stop === t.cylinder ? ' selected' : ''}>${esc(t.cylinder)}</option>`).join('')}</select></td>
-              <td><input class="input" data-f="label" value="${esc(st.label)}" /></td>
-              <td><select class="input" data-f="action"><option value="load"${st.action === 'load' ? ' selected' : ''}>Carga</option><option value="unload"${st.action === 'unload' ? ' selected' : ''}>Descarga</option></select></td>
-              <td><select class="input input--mono" data-f="release">${opt(sensors, st.release, '—')}</select></td>
-              <td><select class="input input--mono" data-f="ok">${opt(sensors, st.okSensors[0], '—')}</select></td>
-              <td><select class="input input--mono" data-f="nok">${opt(sensors, st.nokSensors[0], '—')}</select></td>
-              <td><span class="input-unit"><input class="input" type="number" min="0" step="any" data-f="cycle" value="${st.cycleMs / 1000}" /><span>s</span></span></td>
+              <td data-label="Tope"><select class="input input--mono" data-f="stop">${layout.stops.map((t) => `<option value="${esc(t.cylinder)}"${st.stop === t.cylinder ? ' selected' : ''}>${esc(t.cylinder)}</option>`).join('')}</select></td>
+              <td data-label="Nombre"><input class="input" data-f="label" value="${esc(st.label)}" /></td>
+              <td data-label="Trabajo"><select class="input" data-f="action"><option value="load"${st.action === 'load' ? ' selected' : ''}>Carga</option><option value="unload"${st.action === 'unload' ? ' selected' : ''}>Descarga</option></select></td>
+              <td data-label="Señal al terminar"><select class="input input--mono" data-f="release">${opt(sensors, st.release, '—')}</select></td>
+              <td data-label="Pieza OK (=1)"><select class="input input--mono" data-f="ok">${opt(sensors, st.okSensors[0], '—')}</select></td>
+              <td data-label="Pieza NOK (=0)"><select class="input input--mono" data-f="nok">${opt(sensors, st.nokSensors[0], '—')}</select></td>
+              <td data-label="Tiempo"><span class="input-unit"><input class="input" type="number" min="0" step="any" data-f="cycle" value="${st.cycleMs / 1000}" /><span>s</span></span></td>
               <td class="actions"><button class="icon-btn icon-btn--danger" data-del="stations" aria-label="Quitar estación">${icon('trash', 16)}</button></td>
             </tr>`,
           )
@@ -825,7 +846,11 @@ function buildScene(layout: ConveyorLayout, signals: Signal[]): Scene {
       const el = g.querySelector<SVGGElement>(`[data-pallet="${p.id}"]`);
       if (!el) return;
       const mid = pointAt(layout, p.front - layout.palletLength / 2);
-      el.setAttribute('transform', `translate(${r1(X(mid.x))} ${r1(Y(mid.y))}) rotate(${r1((mid.heading * 180) / Math.PI)})`);
+      const deg = r1((mid.heading * 180) / Math.PI);
+      el.setAttribute('transform', `translate(${r1(X(mid.x))} ${r1(Y(mid.y))}) rotate(${deg})`);
+      // El grupo gira con la paleta; el texto se deshace del giro para que el
+      // número se lea siempre derecho (también en el ramal de vuelta y en las curvas).
+      el.querySelector('text')?.setAttribute('transform', `rotate(${-deg})`);
       el.classList.toggle('is-stopped', !p.moving);
     });
     svg.querySelectorAll<SVGLineElement>('[data-pin]').forEach((pin) => {
