@@ -36,6 +36,83 @@ export type CameraPreset = 'general' | 'lateral' | 'superior';
 const PITCH = 0.05; // paso del dibujo de la cadena (2 eslabones)
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+/** Por debajo de este ancho (px) la vista usa etiquetas compactas. */
+export const COMPACT_WIDTH = 560;
+
+/**
+ * Distancia de la cámara (campo vertical de 35°) para que un lazo de ancho
+ * `span` quepa en un contenedor con esa relación de aspecto, con margen para
+ * las etiquetas de los extremos.
+ */
+export function fitDistance(span: number, aspect: number): number {
+  const a = Math.max(0.3, aspect || 1);
+  const margin = a < 1 ? 1.18 : 1.12;
+  return Math.max(3, (span * margin) / (2 * Math.tan((17.5 * Math.PI) / 180) * a) + 0.8);
+}
+
+/** Caja de una etiqueta en pantalla: centro, tamaño y desplazamiento aplicado. */
+export interface TagBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  dx: number;
+  dy: number;
+  visible: boolean;
+}
+
+const overlaps = (a: TagBox, ax: number, ay: number, b: TagBox, gap: number) =>
+  Math.abs(ax - (b.x + b.dx)) < (a.w + b.w) / 2 + gap && Math.abs(ay - (b.y + b.dy)) < (a.h + b.h) / 2 + gap;
+
+/**
+ * Coloca las etiquetas sin que se pisen ni se salgan del contenedor. Las
+ * primeras de la lista tienen preferencia; las demás se apartan lo mínimo
+ * (primero en vertical). Una etiqueta ya apartada se queda donde está mientras
+ * siga libre, para que no baile de un fotograma a otro.
+ */
+export function placeTags(boxes: TagBox[], width: number, height: number, gap = 3): void {
+  const done: TagBox[] = [];
+  const pad = 4;
+  boxes.forEach((b) => {
+    if (!b.visible || !b.w) {
+      b.dx = b.dy = 0;
+      return;
+    }
+    // Dentro del contenedor (si cabe).
+    const clampX = (x: number) => (b.w + 2 * pad > width ? width / 2 : Math.min(Math.max(x, b.w / 2 + pad), width - b.w / 2 - pad));
+    const clampY = (y: number) => (b.h + 2 * pad > height ? y : Math.min(Math.max(y, b.h / 2 + pad), height - b.h / 2 - pad));
+    const free = (x: number, y: number, g: number) => !done.some((d) => overlaps(b, x, y, d, g));
+    const home = { x: clampX(b.x), y: clampY(b.y) };
+    const prev = { x: clampX(b.x + b.dx), y: clampY(b.y + b.dy) };
+    let pos: { x: number; y: number } | null = null;
+    if (free(home.x, home.y, gap + 6)) pos = home;
+    else if ((b.dx || b.dy) && Math.hypot(b.dx, b.dy) < 4 * b.h + 60 && free(prev.x, prev.y, gap)) pos = prev;
+    else {
+      const stepY = b.h / 2 + gap + 1;
+      const stepX = b.w / 2 + gap + 1;
+      // En vertical primero, hacia el lado en que ya estaba; luego en diagonal.
+      const sign = b.dy < 0 ? -1 : 1;
+      search: for (let ring = 1; ring <= 8; ring++) {
+        for (const kx of [0, 1, -1, 2, -2]) {
+          if (Math.abs(kx) > ring) continue;
+          for (const ky of [sign * ring, -sign * ring]) {
+            const x = clampX(home.x + kx * stepX);
+            const y = clampY(home.y + ky * stepY);
+            if (free(x, y, gap)) {
+              pos = { x, y };
+              break search;
+            }
+          }
+        }
+      }
+    }
+    pos ??= home;
+    b.dx = pos.x - b.x;
+    b.dy = pos.y - b.y;
+    done.push(b);
+  });
+}
+
 /** Devuelve null si el navegador no puede dibujar WebGL. */
 export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { labels: boolean }): PlantView | null {
   // Sin aceleración gráfica (máquinas virtuales, escritorio remoto…) se
@@ -109,7 +186,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   controls.enableDamping = true;
   controls.maxPolarAngle = Math.PI - 0.05;
   controls.minDistance = 0.6;
-  controls.maxDistance = span * 4 + 12;
+  controls.maxDistance = Math.max(span * 4 + 12, fitDistance(span, 0.5) * 1.5);
 
   // ---- Materiales -----------------------------------------------------------
   const mats: THREE.Material[] = [];
@@ -126,7 +203,9 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const black = mat({ color: 0x1d2125, metalness: 0.2, roughness: 0.75 });
   const guide = mat({ color: 0xe8e3d6, metalness: 0, roughness: 0.6 });
   const cylDark = mat({ color: 0x2e3338, metalness: 0.5, roughness: 0.5 });
-  const fixtureBlue = mat({ color: 0x2f5f8a, metalness: 0.55, roughness: 0.35 });
+  // Las paletas llevan color propio: en gris se confundían con el perfil.
+  const palletMat = mat({ color: 0x2f7fd6, metalness: 0.15, roughness: 0.5 });
+  const palletEdge = mat({ color: 0x16406f, metalness: 0.2, roughness: 0.55 });
   const motorBlue = mat({ color: 0x35536f, metalness: 0.45, roughness: 0.45 });
   const guard = mat({ color: 0xe8901c, metalness: 0.2, roughness: 0.5, transparent: true, opacity: 0.18, depthWrite: false });
   const floorMat = mat({ color: dark ? 0x232b33 : 0xb9c0c6, metalness: 0, roughness: 0.92 });
@@ -339,13 +418,24 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   });
 
   // ---- Etiquetas -------------------------------------------------------------
-  const tag = (html: string, cls: string, parent: THREE.Object3D, pos: THREE.Vector3) => {
+  const tagBoxes: (TagBox & { obj: CSS2DObject; el: HTMLElement; line: SVGLineElement })[] = [];
+  const leaders = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  leaders.setAttribute('class', 'plant3d__leaders');
+  leaders.setAttribute('aria-hidden', 'true');
+  labelRenderer.domElement.appendChild(leaders);
+  /** `spread`: la etiqueta se aparta de las demás si se pisan (las de paleta no). */
+  const tag = (html: string, cls: string, parent: THREE.Object3D, pos: THREE.Vector3, spread = true) => {
     const div = document.createElement('div');
     div.className = `tag3d ${cls}`;
     div.innerHTML = html;
     const o = new CSS2DObject(div);
     o.position.copy(pos);
     parent.add(o);
+    if (spread) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      leaders.appendChild(line);
+      tagBoxes.push({ obj: o, el: div, line, x: 0, y: 0, w: 0, h: 0, dx: 0, dy: 0, visible: false });
+    }
     return div;
   };
   const named = (name: string, sub?: string) =>
@@ -464,7 +554,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
           ? `<small class="tag3d__station" data-station>${esc(layout.stations.find((x) => x.stop === t.cylinder)!.label)}: esperando</small>`
           : '') +
         `<small class="tag3d__why" data-why hidden></small>`,
-      'tag3d--stop',
+      `tag3d--stop${layout.stations.some((x) => x.stop === t.cylinder) ? ' tag3d--stop-station' : ''}`,
       conveyor,
       world(p, labelDepth(p.x, p.y), pw / 2 + 0.2),
     );
@@ -503,7 +593,12 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     orient(mark, p);
     mark.position.copy(world(p, 0.003, -(pw / 2 + 0.06)));
     conveyor.add(mark);
-    tag(named('Entrada de paletas', `cola de ${entry.stop}`), 'tag3d--entry', conveyor, world(p, labelDepth(p.x, p.y, 0.25), -(pw / 2 + 0.25)));
+    tag(
+      `<i class="tag3d__dot"></i><b><span class="tag3d__long">Entrada de paletas</span><span class="tag3d__short">Entrada</span></b><small>${esc(`cola de ${entry.stop}`)}</small>`,
+      'tag3d--entry',
+      conveyor,
+      world(p, labelDepth(p.x, p.y, 0.25), -(pw / 2 + 0.25)),
+    );
   }
 
   // ---- Paletas -----------------------------------------------------------------
@@ -517,31 +612,33 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   const makePallet = (id: number): PalletObj => {
     const g = new THREE.Group();
     // Y local = hacia fuera de la cadena: arriba va de pie, abajo cuelga.
-    const plate = box(plen * 0.97, 0.022, pw, steel);
-    plate.position.y = 0.011;
-    const strip = box(plen * 0.97, 0.008, pw * 0.92, darkSteel);
-    strip.position.y = 0.026;
-    const fixture = box(plen * 0.42, 0.035, pw * 0.5, fixtureBlue);
-    fixture.position.y = 0.047;
+    const plate = box(plen * 0.97, 0.03, pw, palletMat);
+    plate.position.y = 0.015;
+    const strip = box(plen * 0.97, 0.008, pw * 0.92, palletEdge);
+    strip.position.y = 0.034;
+    // Utillaje alto: es lo que se ve de la paleta cuando se mira de lado o desde abajo.
+    const fixture = box(plen * 0.5, 0.09, pw * 0.6, palletMat);
+    fixture.position.y = 0.083;
     const pinA = cyl(0.007, 0.03, steel, 10);
-    pinA.position.set(plen * 0.3, 0.045, pw * 0.3);
+    pinA.position.set(plen * 0.38, 0.053, pw * 0.38);
     const pinB = pinA.clone();
-    pinB.position.set(-plen * 0.3, 0.045, -pw * 0.3);
+    pinB.position.set(-plen * 0.38, 0.053, -pw * 0.38);
     const arrow = new THREE.Mesh(new THREE.ConeGeometry(Math.min(plen, pw) * 0.12, Math.min(plen, pw) * 0.25, 3), arrowMat);
     arrow.rotation.z = -Math.PI / 2;
     arrow.scale.set(1, 1, 0.25);
-    arrow.position.set(0, 0.068, 0);
+    arrow.position.set(0, 0.131, 0);
     g.add(plate, strip, fixture, pinA, pinB, arrow);
     mergeStatic(g);
     palletRoot.add(g);
-    const label = tag(`<b>P${id}</b>`, 'tag3d--pallet', g, new THREE.Vector3(0, 0.16, 0));
+    const label = tag(`<b>P${id}</b>`, 'tag3d--pallet', g, new THREE.Vector3(0, 0.24, 0), false);
     return { g, label };
   };
 
   // ---- Cámara ------------------------------------------------------------------
   const setCamera = (preset: CameraPreset) => {
-    const aspect = Math.max(1, camera.aspect || 1.8);
-    const d = Math.max(3, (span * 1.1) / (2 * Math.tan(THREE.MathUtils.degToRad(17.5)) * aspect) + 0.8);
+    // El campo horizontal depende del ancho del contenedor: en pantallas
+    // estrechas (móvil) hay que alejarse para que quepa todo el lazo.
+    const d = fitDistance(span, camera.aspect || 1.8);
     if (preset === 'lateral') {
       camera.position.set(0, HC, d);
       controls.target.set(0, HC, 0);
@@ -559,6 +656,42 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   mergeStatic(conveyor);
   if (soft) lighten();
 
+  // ---- Etiquetas que no se pisan -------------------------------------------------
+  let sizeAge = 0;
+  const proj = new THREE.Vector3();
+  const spreadTags = () => {
+    const wpx = el.clientWidth;
+    const hpx = el.clientHeight;
+    // Medir obliga al navegador a recalcular: se hace de vez en cuando.
+    const measure = sizeAge-- <= 0;
+    if (measure) sizeAge = 20;
+    const shown = !el.classList.contains('no-labels');
+    tagBoxes.forEach((b) => {
+      proj.setFromMatrixPosition(b.obj.matrixWorld).project(camera);
+      b.visible = shown && proj.z > -1 && proj.z < 1;
+      b.x = (proj.x * 0.5 + 0.5) * wpx;
+      b.y = (-proj.y * 0.5 + 0.5) * hpx;
+      if (measure || !b.w) {
+        b.w = b.el.offsetWidth;
+        b.h = b.el.offsetHeight;
+      }
+    });
+    placeTags(tagBoxes, wpx, hpx);
+    tagBoxes.forEach((b) => {
+      const tr = b.dx || b.dy ? `${Math.round(b.dx)}px ${Math.round(b.dy)}px` : '';
+      if (b.el.style.translate !== tr) b.el.style.translate = tr;
+      // Línea guía hasta su sitio cuando la etiqueta se ha apartado bastante.
+      const far = b.visible && Math.hypot(b.dx, b.dy) > 14;
+      b.line.style.display = far ? '' : 'none';
+      if (far) {
+        b.line.setAttribute('x1', b.x.toFixed(1));
+        b.line.setAttribute('y1', b.y.toFixed(1));
+        b.line.setAttribute('x2', (b.x + b.dx).toFixed(1));
+        b.line.setAttribute('y2', (b.y + b.dy).toFixed(1));
+      }
+    });
+  };
+
   // ---- Tamaño ------------------------------------------------------------------
   let fitted = false;
   const resize = () => {
@@ -570,6 +703,9 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     labelRenderer.setSize(wpx, hpx);
     camera.aspect = wpx / hpx;
     camera.updateProjectionMatrix();
+    // En estrecho, las etiquetas muestran solo el código; el detalle, al tocarlas.
+    el.classList.toggle('plant3d--compact', wpx < COMPACT_WIDTH);
+    sizeAge = 0;
     if (!fitted && el.clientWidth) {
       fitted = true;
       setCamera('general');
@@ -577,6 +713,15 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
   };
   const ro = new ResizeObserver(resize);
   ro.observe(el);
+  const onTagClick = (e: Event) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('.tag3d');
+    if (!t || !el.classList.contains('plant3d--compact')) return;
+    const open = !t.classList.contains('is-expanded');
+    el.querySelectorAll('.tag3d.is-expanded').forEach((x) => x.classList.remove('is-expanded'));
+    t.classList.toggle('is-expanded', open);
+    sizeAge = 0;
+  };
+  labelRenderer.domElement.addEventListener('click', onTagClick);
 
   // ---- Actualización -----------------------------------------------------------
   let lastTime = -1;
@@ -693,6 +838,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
     controls.update();
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
+    spreadTags();
   };
 
   let quality = soft ? 3 : 6;
@@ -726,6 +872,7 @@ export function createView3d(layout: ConveyorLayout, signals: Signal[], opts: { 
 
   const dispose = () => {
     ro.disconnect();
+    labelRenderer.domElement.removeEventListener('click', onTagClick);
     controls.dispose();
     scene.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
