@@ -176,6 +176,7 @@ export function renderHome(app: App): HTMLElement {
         if (act === 'dup') {
           const copy = duplicateProject(id);
           if (copy) toast(`Creado «${copy.name}».`);
+          else toast('No se pudo duplicar: el almacenamiento del navegador está lleno.', 'error', 5000);
           draw();
         } else if (act === 'exp') {
           void download(`${slug(p.name)}.autosequence.json`, exportProjectJSON(p), 'application/json', 'Proyecto exportado.');
@@ -186,8 +187,13 @@ export function renderHome(app: App): HTMLElement {
             { confirm: 'Mover a la papelera', danger: true },
           );
           if (!ok) return;
-          deleteProject(id);
-          toast('Proyecto movido a la papelera.');
+          if (deleteProject(id)) toast('Proyecto movido a la papelera.');
+          else
+            toast(
+              'No se ha eliminado: no cabe en la papelera porque el almacenamiento del navegador está lleno. Exporta una copia y vacía la papelera.',
+              'error',
+              6000,
+            );
           draw();
         } else {
           app.openProject(id);
@@ -203,12 +209,22 @@ export function renderHome(app: App): HTMLElement {
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    const res = importFile(await file.text());
+    let res: ReturnType<typeof importFile>;
+    try {
+      res = importFile(await file.text());
+    } catch {
+      res = { ok: false, error: 'No se pudo leer el archivo.' };
+    }
     if (!res.ok) return toast(res.error, 'error', 5000);
+    const skipped = res.skipped
+      ? ` ${res.skipped} no se ${res.skipped === 1 ? 'pudo' : 'pudieron'} importar.`
+      : '';
     toast(
-      res.imported.length === 1
+      res.imported.length === 1 && !skipped
         ? `Importado «${res.imported[0].name}».`
-        : `Copia restaurada: ${res.imported.length} proyectos importados.`,
+        : `Copia restaurada: ${res.imported.length} proyecto${res.imported.length === 1 ? '' : 's'} importado${res.imported.length === 1 ? '' : 's'}.${skipped}`,
+      skipped ? 'info' : undefined,
+      skipped ? 6000 : undefined,
     );
     draw();
     drawNotice();
