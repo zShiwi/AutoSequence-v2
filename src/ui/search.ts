@@ -16,6 +16,11 @@ export function normalize(text: string): string {
     .trim();
 }
 
+/** Texto en una sola línea: los saltos (al pegar) pasan a ser espacios. */
+export function oneLine(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, ' ');
+}
+
 /** Cada palabra de la consulta debe aparecer en alguno de los campos. */
 export function matchesQuery(fields: (string | undefined)[], query: string): boolean {
   const q = normalize(query);

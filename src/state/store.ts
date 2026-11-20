@@ -333,6 +333,93 @@ export function exportAllJSON(): string {
   return json;
 }
 
+/** Un proyecto que entraría al importar un archivo. */
+export interface ImportEntry {
+  /** Nombre que trae en el archivo. */
+  name: string;
+  /** Nombre con el que quedará (distinto si el original ya existe). */
+  finalName: string;
+  renamed: boolean;
+  signals: number;
+  rules: number;
+  blocks: number;
+}
+
+/** Un elemento del archivo que no se puede importar. */
+export interface ImportDiscard {
+  name: string;
+  reason: string;
+}
+
+export type ImportPreview =
+  | { ok: true; kind: 'project' | 'backup'; entries: ImportEntry[]; discarded: ImportDiscard[] }
+  | { ok: false; error: string };
+
+const NOT_A_PROJECT = 'El archivo no parece un proyecto de AutoSequence (faltan «name» o «signals»).';
+
+/** Primer nombre libre: «Base», «Base (2)», «Base (3)»… */
+function freeName(base: string, taken: (name: string) => boolean): string {
+  let name = base;
+  let n = 2;
+  while (taken(name)) name = `${base} (${n++})`;
+  return name;
+}
+
+/**
+ * Qué pasaría al importar el archivo, sin guardar nada: qué proyectos entran,
+ * cuáles cambian de nombre por estar repetido y cuáles se descartan por
+ * dañados. Sigue los mismos pasos que `importFile`.
+ */
+export function previewImport(json: string): ImportPreview {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return { ok: false, error: 'El archivo no es un JSON válido.' };
+  }
+  const backup = data as Partial<FullBackup>;
+  const isBackup = !!backup && backup.format === 'autosequence-backup' && Array.isArray(backup.projects);
+  const items: unknown[] = isBackup ? backup.projects! : [data];
+  const taken = new Set(loadProjects().map((p) => p.name.trim().toLowerCase()));
+  const entries: ImportEntry[] = [];
+  const discarded: ImportDiscard[] = [];
+  let notProject = false;
+  items.forEach((item, i) => {
+    const p = item as Partial<Project> | null;
+    const label = p && typeof p === 'object' && typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Elemento ${i + 1}`;
+    if (!p || typeof p !== 'object' || !Array.isArray(p.signals) || typeof p.name !== 'string') {
+      notProject = true;
+      discarded.push({ name: label, reason: 'No es un proyecto de AutoSequence (faltan «name» o «signals»).' });
+      return;
+    }
+    try {
+      const base = p.name.trim() || 'Proyecto sin nombre';
+      const finalName = freeName(base, (n) => taken.has(n.trim().toLowerCase()));
+      const project = normalize({ ...(p as Project), id: undefined, name: finalName });
+      taken.add(finalName.trim().toLowerCase());
+      entries.push({
+        name: base,
+        finalName,
+        renamed: finalName !== base,
+        signals: project.signals.length,
+        rules: project.blocks.reduce((n, b) => n + b.rules.length, 0),
+        blocks: project.blocks.length,
+      });
+    } catch {
+      discarded.push({ name: label, reason: 'Está dañado y no se puede leer.' });
+    }
+  });
+  if (!entries.length) {
+    const error = isBackup
+      ? 'La copia de seguridad no contiene proyectos válidos.'
+      : notProject
+        ? NOT_A_PROJECT
+        : 'El archivo está dañado y no se puede importar.';
+    return { ok: false, error };
+  }
+  return { ok: true, kind: isBackup ? 'backup' : 'project', entries, discarded };
+}
+
 /** Importa un proyecto exportado o una copia completa de varios. */
 export function importFile(
   json: string,
@@ -392,14 +479,11 @@ export function importProject(json: string): { ok: true; project: Project } | { 
   }
   const p = data as Partial<Project>;
   if (!p || typeof p !== 'object' || !Array.isArray(p.signals) || typeof p.name !== 'string') {
-    return { ok: false, error: 'El archivo no parece un proyecto de AutoSequence (faltan «name» o «signals»).' };
+    return { ok: false, error: NOT_A_PROJECT };
   }
   let project: Project;
   try {
-    const base = p.name.trim() || 'Proyecto sin nombre';
-    let name = base;
-    let n = 2;
-    while (nameTaken(name)) name = `${base} (${n++})`;
+    const name = freeName(p.name.trim() || 'Proyecto sin nombre', (n) => nameTaken(n));
     project = normalize({ ...(p as Project), id: undefined, name });
   } catch {
     return { ok: false, error: 'El archivo está dañado y no se puede importar.' };
@@ -539,6 +623,17 @@ export function flushSave(): void {
     maybeSaveVersion(p);
   }
   emit();
+}
+
+/**
+ * Guarda ahora el proyecto abierto (Ctrl+S). Si el último guardado falló, lo
+ * reintenta. Devuelve si el proyecto ha quedado guardado.
+ */
+export function saveNow(): boolean {
+  if (!session.project) return false;
+  if (session.saveStatus === 'error') session.saveStatus = 'pending';
+  flushSave();
+  return session.saveStatus === 'saved';
 }
 
 /** Guarda ahora una versión con nombre del proyecto abierto. */

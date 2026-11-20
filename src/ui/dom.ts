@@ -69,6 +69,7 @@ const P: Record<string, string> = {
   cylinder: '<rect x="2" y="7" width="10" height="6" rx="1"/><path d="M12 10h6M16 8v4"/>',
   motor: '<circle cx="10" cy="10" r="6"/><path d="M8 13V7l2 3 2-3v6"/>',
   sensor: '<path d="M4 10h5"/><circle cx="12" cy="10" r="3"/><path d="M16 6.5a5 5 0 0 1 0 7"/>',
+  help: '<circle cx="10" cy="10" r="7"/><path d="M7.8 8a2.3 2.3 0 1 1 3.3 2.1c-.7.4-1.1.8-1.1 1.6M10 14.2v.3"/>',
   virtual: '<rect x="4" y="4" width="12" height="12" rx="2" stroke-dasharray="2 2"/><path d="M8 10h4"/>',
 };
 
@@ -89,15 +90,61 @@ function toastHost(): HTMLElement {
   return host;
 }
 
-export function toast(message: string, kind: ToastKind = 'ok', ms = 3200): void {
-  const ic = { ok: 'check', info: 'info', warn: 'alert', error: 'alert' }[kind];
-  const el = h(`<div class="toast toast--${kind}">${icon(ic)}<span>${esc(message)}</span></div>`);
-  toastHost().appendChild(el);
-  requestAnimationFrame(() => el.classList.add('is-in'));
+/** Avisos a la vez en pantalla; al pasar de aquí se retira el más antiguo. */
+const TOAST_MAX = 3;
+
+interface LiveToast {
+  key: string;
+  el: HTMLElement;
+  timer: number;
+}
+const liveToasts: LiveToast[] = [];
+
+/**
+ * Publica el alto que ocupan los avisos (--toast-space): en móvil la página
+ * reserva ese hueco al final para que no tapen lo que hay al pie.
+ */
+function syncToastSpace(): void {
+  const host = document.getElementById('toasts');
+  const space = host && liveToasts.length ? host.offsetHeight + 20 : 0;
+  document.documentElement.style.setProperty('--toast-space', `${space}px`);
+}
+
+function dismissToast(t: LiveToast): void {
+  const i = liveToasts.indexOf(t);
+  if (i < 0) return;
+  liveToasts.splice(i, 1);
+  window.clearTimeout(t.timer);
+  t.el.classList.remove('is-in');
   window.setTimeout(() => {
-    el.classList.remove('is-in');
-    window.setTimeout(() => el.remove(), 250);
-  }, ms);
+    t.el.remove();
+    syncToastSpace();
+  }, 250);
+}
+
+/**
+ * Aviso emergente. Desaparece solo, o antes si se toca. Un aviso idéntico a
+ * otro que sigue en pantalla no se apila: renueva el que ya está.
+ */
+export function toast(message: string, kind: ToastKind = 'ok', ms = 3200): void {
+  const key = `${kind}\n${message}`;
+  const same = liveToasts.find((t) => t.key === key);
+  if (same) {
+    window.clearTimeout(same.timer);
+    same.timer = window.setTimeout(() => dismissToast(same), ms);
+    toastHost().appendChild(same.el);
+    return;
+  }
+  const ic = { ok: 'check', info: 'info', warn: 'alert', error: 'alert' }[kind];
+  const el = h(`<div class="toast toast--${kind}" title="Toca para cerrar">${icon(ic)}<span>${esc(message)}</span></div>`);
+  const t: LiveToast = { key, el, timer: 0 };
+  liveToasts.push(t);
+  while (liveToasts.length > TOAST_MAX) dismissToast(liveToasts[0]);
+  toastHost().appendChild(el);
+  syncToastSpace();
+  requestAnimationFrame(() => el.classList.add('is-in'));
+  el.addEventListener('click', () => dismissToast(t));
+  t.timer = window.setTimeout(() => dismissToast(t), ms);
 }
 
 // ---- Diálogos -------------------------------------------------------------
@@ -108,6 +155,12 @@ interface ModalAction {
   /** Devuelve false para mantener el diálogo abierto. */
   run?: () => boolean | void;
 }
+
+/** Diálogos abiertos, el último encima. */
+const modalStack: HTMLElement[] = [];
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function modal(opts: {
   title: string;
@@ -121,7 +174,7 @@ export function modal(opts: {
       <div class="modal${opts.wide ? ' modal--wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <header class="modal__head">
           <h2 id="modal-title">${esc(opts.title)}</h2>
-          <button class="icon-btn" data-close aria-label="Cerrar">${icon('x')}</button>
+          <button class="icon-btn" data-close aria-label="Cerrar" title="Cerrar (Esc)">${icon('x')}</button>
         </header>
         <div class="modal__body"></div>
         <footer class="modal__foot"></footer>
@@ -137,12 +190,36 @@ export function modal(opts: {
     if (closed) return;
     closed = true;
     document.removeEventListener('keydown', onKey);
+    const at = modalStack.indexOf(root);
+    if (at >= 0) modalStack.splice(at, 1);
     root.remove();
     prevFocus?.focus?.();
     opts.onClose?.();
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') close();
+    // Con varios diálogos apilados, el teclado es solo del de arriba.
+    if (modalStack[modalStack.length - 1] !== root) return;
+    if (e.key === 'Escape') {
+      e.stopImmediatePropagation();
+      close();
+    } else if (e.key === 'Tab') {
+      // El foco no sale del diálogo: da la vuelta.
+      const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !root.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
   };
   document.addEventListener('keydown', onKey);
   root.addEventListener('mousedown', (e) => {
@@ -163,6 +240,7 @@ export function modal(opts: {
   });
 
   document.body.appendChild(root);
+  modalStack.push(root);
   const focusable = root.querySelector<HTMLElement>('input, select, textarea') ??
     foot.querySelector<HTMLElement>('.btn--primary, .btn--danger');
   focusable?.focus();
@@ -305,6 +383,39 @@ export async function download(
   return true;
 }
 
+/** Fecha local como AAAA-MM-DD (la de `toISOString` es UTC y de madrugada da el día anterior). */
+export function dateStamp(d: Date = new Date()): string {
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
+/** Nombres que Windows reserva para dispositivos y no admite como archivo. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/**
+ * Nombre de archivo legible a partir de un texto libre, válido en Windows:
+ * sin `< > : " / \\ | ? *` ni caracteres de control, sin punto ni espacio al
+ * final, sin nombres reservados y de longitud razonable.
+ */
+export function safeFileName(text: string, fallback = 'Proyecto'): string {
+  let name = text
+    .normalize('NFC')
+    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .replace(/[. ]+$/, '')
+    .trim();
+  if (name.length > 80) name = name.slice(0, 80).replace(/[. ]+$/, '');
+  if (!name) return fallback;
+  return WINDOWS_RESERVED.test(name) ? `_${name}` : name;
+}
+
+/** Nombre del archivo de exportación: «ACU 4 topes · 2026-11-20.json». */
+export function exportFileName(projectName: string, date: Date = new Date()): string {
+  return `${safeFileName(projectName)} · ${dateStamp(date)}.json`;
+}
+
 export function slug(text: string): string {
   return (
     text
@@ -331,4 +442,37 @@ export async function copyText(text: string): Promise<boolean> {
     ta.remove();
     return ok;
   }
+}
+
+// ---- Ayudas de los botones de icono ---------------------------------------
+
+const ICON_BUTTONS = 'button, [role="button"], a.icon-btn';
+
+function labelIconButton(el: Element): void {
+  if (!el.matches(ICON_BUTTONS)) return;
+  const title = el.getAttribute('title');
+  const label = el.getAttribute('aria-label');
+  if (label && !title) el.setAttribute('title', label);
+  // Con texto visible el botón ya tiene nombre: solo se completa si es de icono.
+  else if (title && !label && !el.textContent?.trim()) el.setAttribute('aria-label', title);
+}
+
+/**
+ * Garantiza que todo botón con nombre accesible tenga también ayuda emergente
+ * (title), y que el que solo lleva icono tenga nombre accesible (aria-label):
+ * si falta uno, se copia del otro. Vigila los cambios del documento, porque
+ * las vistas se pintan con HTML generado.
+ */
+export function watchIconButtons(root: HTMLElement = document.body): void {
+  const scan = (node: Element) => {
+    labelIconButton(node);
+    node.querySelectorAll(ICON_BUTTONS).forEach(labelIconButton);
+  };
+  scan(root);
+  new MutationObserver((changes) => {
+    for (const c of changes) {
+      if (c.type === 'attributes') labelIconButton(c.target as Element);
+      else c.addedNodes.forEach((n) => n instanceof Element && scan(n));
+    }
+  }).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'title'] });
 }
