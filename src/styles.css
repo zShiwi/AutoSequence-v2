@@ -4807,11 +4807,11 @@ textarea.input--area {
 
 @media (min-width: 641px) {
   .table--signals .col-name {
-    width: 15%;
+    width: 19%;
   }
 
   .table--signals .col-type {
-    width: 11%;
+    width: 10%;
   }
 
   .table--signals .col-init {
@@ -4820,7 +4820,7 @@ textarea.input--area {
 
   /* Cada inductivo lleva al lado su campo de dirección (68 px). */
   .table--signals .col-ind {
-    width: 208px;
+    width: 200px;
   }
 
   .table--signals .col-addr {

@@ -253,8 +253,13 @@ test.describe('señales', () => {
     const w = async (sel: string) => (await page.locator(sel).boundingBox())!.width;
     const ind = await w('.table--signals th.col-ind');
     const desc = await w('.table--signals th:nth-child(4)');
-    // 208 px: cada inductivo lleva al lado su campo de dirección.
-    expect(ind).toBeLessThanOrEqual(212);
+    // 200 px: cada inductivo lleva al lado su campo de dirección.
+    expect(ind).toBeLessThanOrEqual(204);
+    // Ningún nombre de señal queda cortado en su campo.
+    const names = await page.locator('.table--signals [data-f="name"]').evaluateAll((els) =>
+      (els as HTMLInputElement[]).filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.value),
+    );
+    expect(names).toEqual([]);
     expect(desc).toBeGreaterThan(ind * 1.5);
     // Los inductivos siguen cabiendo en sus campos.
     const cut = await page.locator('.table--signals [data-f="inductivoActivo"]').evaluateAll((els) =>
