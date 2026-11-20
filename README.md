@@ -13,15 +13,33 @@ oscuro, y funcionamiento sin conexión (las fuentes van incluidas).
 
 | Paso | Sección | Qué hace |
 | --- | --- | --- |
-| 1 | **Señales** | Sensores, motores, cilindros (con inductivos de posición) y marcas. Validación de nombres en línea; al renombrar una señal se actualizan las reglas que la usan. |
+| 1 | **Señales** | Sensores, motores, cilindros (con inductivos de posición) y marcas. Validación de nombres en línea; al renombrar una señal se actualizan las reglas que la usan. Cada señal guarda su dirección (E/A/M), editable a mano. |
 | 2 | **Lógica** | Reglas agrupadas en bloques. Condiciones por nivel (=1 / =0) o flanco (↑ / ↓); acciones SET, RESET o alternar. Reordenar, duplicar, avisos de señales inexistentes. |
 | 3 | **Simulación** | Escenario automático, **panel manual** o **transportador** animado. Cronogramas por bloque con la regla que provoca cada cambio. Detecta lógica que oscila. |
 | 4 | **Código PLC** | AWL con resaltado, esquema de contactos gráfico y tabla de símbolos (E/A/M). Copiar y descargar `.awl`, `.svg`, `.csv`. |
-| 5 | **Documentación** | Portada con índice y una hoja A3 por bloque (tabla de señales, cronograma, cajetín). Imprimir / guardar en PDF o descargar SVG. |
+| 5 | **Documentación** | Portada con índice, una hoja A3 por bloque (tabla de señales, cronograma, cajetín) y la tabla de símbolos con las marcas auxiliares. Imprimir / guardar en PDF o descargar SVG. |
 
 Los proyectos se **guardan automáticamente** en el navegador y se pueden
 exportar/importar como `.json`. Los proyectos creados con el prototipo original
 siguen apareciendo y se abren sin cambios.
+
+## Direcciones E/A/M
+
+Cada señal, y cada inductivo de cilindro, guarda su dirección en el proyecto:
+no se recalculan por orden, así que añadir, borrar o reordenar señales no
+mueve las demás y la documentación impresa o el cableado siguen coincidiendo.
+
+- Una señal nueva recibe el primer hueco libre de su área: **E** sensores e
+  inductivos, **A** motores y cilindros, **M** marcas virtuales. Al cambiarle
+  el tipo se le reasigna en el área que toca; al borrarla, su dirección queda
+  libre.
+- Las marcas virtuales nunca ocupan las marcas auxiliares del programa
+  (memorias y pulsos de flanco, reglas activas; desde M100).
+- En **Señales** se edita a mano (`E 0.3`, bit de 0 a 7, sin repetir y en el
+  área de su tipo). «Renumerar todo» vuelve a la asignación seguida.
+- Un proyecto anterior, sin direcciones guardadas, recibe al abrirlo
+  exactamente las que se le calculaban. Al importar, las repetidas o no
+  válidas se sustituyen por un hueco libre y se avisa.
 
 ## Modelo de simulación
 

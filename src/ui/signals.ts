@@ -249,11 +249,11 @@ export function renderSignals(app: App): HTMLElement {
         <div class="table-scroll">
           <table class="table table--edit">
             <thead><tr>
-              <th style="width:19%">Nombre</th>
-              <th style="width:13%">Tipo</th>
-              <th style="width:7%">Inicial</th>
+              <th style="width:17%">Nombre</th>
+              <th style="width:12%">Tipo</th>
+              <th style="width:6%">Inicial</th>
               <th>Descripción</th>
-              <th style="width:25%">Inductivos de posición</th>
+              <th style="width:24%">Inductivos de posición</th>
               <th style="width:8%">Dirección</th>
               <th style="width:7%">Uso</th>
               <th class="actions"><span class="sr-only">Eliminar</span></th>
@@ -267,7 +267,7 @@ export function renderSignals(app: App): HTMLElement {
                     <div class="name-cell"><span class="type-ico type-ico--${s.type.toLowerCase()}">${icon(TYPE_ICON[s.type], 16)}</span>
                     <input class="input input--mono" data-f="name" value="${esc(s.name)}" placeholder="p. ej. CIL_A" spellcheck="false" aria-label="Nombre de la señal" /></div>
                     <p class="cell-error" hidden></p>
-                    <p class="cell-error" data-slot="addr-error" role="alert" hidden></p>
+                    <p class="addr-error" data-slot="addr-error" role="alert" hidden></p>
                   </td>
                   <td>
                     <select class="input" data-f="type" aria-label="Tipo">

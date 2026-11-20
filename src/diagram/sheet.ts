@@ -254,6 +254,8 @@ export function renderSymbolSheet(rows: SymbolRow[], meta: SheetMeta & { title: 
   for (let c = 0; c < 3; c++) {
     const x = 15 + c * colW;
     const part = rows.slice(c * perCol, (c + 1) * perCol);
+    // Una columna sin filas se deja en blanco, sin cabecera.
+    if (c > 0 && !part.length) continue;
     if (c > 0) out.push(`<line x1="${x}" y1="${top}" x2="${x}" y2="1020" style="stroke:#000;stroke-width:1"/>`);
     out.push(cell(x, top, colW, 26, '#F0F0F0'));
     out.push(txt(x + 8, top + 17, 'Dirección', { size: 10.5, weight: 700 }));

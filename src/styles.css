@@ -4362,6 +4362,14 @@ kbd {
   height: 36px;
 }
 
+/* Aviso de una dirección rechazada: como el del nombre, bajo el campo. */
+.addr-error {
+  margin: 5px 0 0 36px;
+  font-size: 12px;
+  color: var(--err);
+  font-weight: 500;
+}
+
 .ind-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 68px;
@@ -4402,5 +4410,15 @@ kbd {
 
   .ind-row {
     grid-template-columns: minmax(0, 1fr) 76px;
+  }
+
+  /* Pie de la tabla: los dos botones en una fila y la nota debajo. */
+  .card__foot:has([data-act='renumber']) {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .card__foot:has([data-act='renumber']) > .muted {
+    flex-basis: 100%;
   }
 }
