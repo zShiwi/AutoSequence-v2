@@ -64,51 +64,83 @@ const KIND_TITLE: Record<WaveRow['kind'], string> = {
   derived: 'Inductivo',
 };
 
-export function renderTimingDiagram(
-  rows: WaveRow[],
-  history: SimStep[],
-  opts: {
-    stepW?: number;
-    highlightStep?: number;
-    links?: LinkMode;
-    ruleLabel?: (ruleId: number | string, ruleIndex: number) => string;
-    /** Pantallas estrechas: columna de nombres ajustada y tipo como marca de color. */
-    compact?: boolean;
-  } = {},
-): string {
-  if (!rows.length || !history.length) {
-    return '<p class="empty-inline">No hay datos de simulación.</p>';
-  }
+export interface TimingOptions {
+  stepW?: number;
+  highlightStep?: number;
+  links?: LinkMode;
+  ruleLabel?: (ruleId: number | string, ruleIndex: number) => string;
+  /** Pantallas estrechas: columna de nombres ajustada y tipo como marca de color. */
+  compact?: boolean;
+}
+
+const ROW_H = 38;
+const HEAD_H = 22;
+/** Margen a la izquierda de las ondas cuando van en su propio SVG. */
+const WAVES_PAD = 8;
+
+/** Medidas comunes del cronograma entero y de sus dos mitades. */
+function measure(rows: WaveRow[], history: SimStep[], opts: TimingOptions) {
   const compact = !!opts.compact;
   // En compacto la columna mide lo que el nombre más largo (unos 7 px por letra).
   const longest = rows.reduce((n, r) => Math.max(n, r.name.length), 0);
   const labelW = compact ? Math.min(188, Math.max(72, 22 + Math.ceil(longest * 6.9))) : 188;
-  const rowH = 38;
   const stepW = opts.stepW ?? Math.max(36, Math.min(48, Math.floor(1100 / history.length)));
-  const width = labelW + history.length * stepW + 16;
-  const height = 22 + rows.length * rowH + 8;
+  return { compact, labelW, stepW, wavesW: history.length * stepW + 16, height: HEAD_H + rows.length * ROW_H + 8 };
+}
 
+/** Columna de nombres: cabecera, nombre de cada señal y su tipo. */
+function namesColumn(rows: WaveRow[], labelW: number, compact: boolean): string {
   const labels = rows
     .map((r, i) => {
-      const y = 22 + i * rowH + rowH / 2;
+      const y = HEAD_H + i * ROW_H + ROW_H / 2;
       if (compact) {
         return `<g class="td-label"><title>${KIND_TITLE[r.kind]}</title><rect x="4" y="${y - 8}" width="3" height="16" rx="1.5" style="fill:${SCREEN_PAINT.wave[r.kind]}"/><text x="12" y="${y + 4}" style="font:500 11.5px ${SCREEN_PAINT.mono};fill:${SCREEN_PAINT.text}">${esc(r.name)}</text></g>`;
       }
       return `<g class="td-label"><text x="12" y="${y + 4}" style="font:500 12.5px ${SCREEN_PAINT.mono};fill:${SCREEN_PAINT.text}">${esc(r.name)}</text><text x="${labelW - 12}" y="${y + 4}" text-anchor="end" style="font:600 9px ${SCREEN_PAINT.font};letter-spacing:.06em;fill:${SCREEN_PAINT.wave[r.kind]}">${KIND_TAG[r.kind]}</text></g>`;
     })
     .join('');
-
-  const effects = computeEffects(rows, history, opts.ruleLabel ?? ((_, i) => `R${i + 1}`));
-  const waves = drawWaves(
-    rows,
-    history,
-    { x: labelW, y: 0, rowH, stepW, timeHeader: true },
-    SCREEN_PAINT,
-    { markerId: 'td-ah', effects, links: opts.links ?? 'hover', highlightStep: opts.highlightStep },
-  );
-
-  return `<svg class="timing-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Cronograma de señales">
-  <text x="12" y="14" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">SEÑAL</text>
+  return `<text x="12" y="14" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">SEÑAL</text>
   ${compact ? '' : `<text x="${labelW - 12}" y="14" text-anchor="end" style="font:600 10px ${SCREEN_PAINT.font};letter-spacing:.08em;fill:${SCREEN_PAINT.muted}">CICLO →</text>`}
-  ${labels}${waves}</svg>`;
+  ${labels}`;
+}
+
+function wavesAt(x: number, rows: WaveRow[], history: SimStep[], stepW: number, opts: TimingOptions): string {
+  const effects = computeEffects(rows, history, opts.ruleLabel ?? ((_, i) => `R${i + 1}`));
+  return drawWaves(rows, history, { x, y: 0, rowH: ROW_H, stepW, timeHeader: true }, SCREEN_PAINT, {
+    markerId: 'td-ah',
+    effects,
+    links: opts.links ?? 'hover',
+    highlightStep: opts.highlightStep,
+  });
+}
+
+/** Cronograma en un único SVG (para descargar como imagen). */
+export function renderTimingDiagram(rows: WaveRow[], history: SimStep[], opts: TimingOptions = {}): string {
+  if (!rows.length || !history.length) {
+    return '<p class="empty-inline">No hay datos de simulación.</p>';
+  }
+  const m = measure(rows, history, opts);
+  const width = m.labelW + m.wavesW;
+  return `<svg class="timing-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${m.height}" width="${width}" height="${m.height}" role="img" aria-label="Cronograma de señales">
+  ${namesColumn(rows, m.labelW, m.compact)}${wavesAt(m.labelW, rows, history, m.stepW, opts)}</svg>`;
+}
+
+/**
+ * Cronograma en pantalla, partido en dos SVG de la misma altura dentro del
+ * mismo contenedor con desplazamiento: los nombres quedan fijos a la izquierda
+ * (`position: sticky`) y las ondas se desplazan por debajo. Al compartir
+ * contenedor, el desplazamiento vertical es el mismo para los dos.
+ */
+export function renderTimingSplit(rows: WaveRow[], history: SimStep[], opts: TimingOptions = {}): string {
+  if (!rows.length || !history.length) {
+    return '<p class="empty-inline">No hay datos de simulación.</p>';
+  }
+  const m = measure(rows, history, opts);
+  const wavesW = WAVES_PAD + m.wavesW;
+  return `<div class="timing${m.compact ? ' timing--compact' : ''}" style="--td-names-w:${m.labelW}px">
+  <svg class="timing-names" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${m.labelW} ${m.height}" width="${m.labelW}" height="${m.height}" role="img" aria-label="Señales del cronograma">
+  ${namesColumn(rows, m.labelW, m.compact)}</svg>
+  <svg class="timing-svg timing-svg--waves" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${wavesW} ${m.height}" width="${wavesW}" height="${m.height}" role="img" aria-label="Cronograma de señales">
+  ${wavesAt(WAVES_PAD, rows, history, m.stepW, opts)}</svg>
+</div>`;
 }

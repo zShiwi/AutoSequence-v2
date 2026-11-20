@@ -14,10 +14,11 @@
 import { allRules, commit, project } from '../state/store';
 import { cleanSignals, actionTargets } from '../plc/signals';
 import { ruleLabeler } from '../plc/rules';
-import { Plant } from '../plant/engine';
+import { Plant, waitConditionText, type WaitCondition } from '../plant/engine';
 import {
   PRESENCE_BEFORE_STOP,
   defaultLayout,
+  layoutCapacity,
   liftEnd,
   loopLength,
   palletEntry,
@@ -30,6 +31,7 @@ import {
 import type { ConveyorLayout, ConveyorLine, LayoutSensor, LayoutStation, LayoutStop, Signal, SignalLevel } from '../types';
 import { esc, h, icon, qs, toast } from './dom';
 import type { App } from './app';
+import { watchScrollEdges } from './scrolledges';
 import type { CameraPreset, PlantView } from '../plant/view3d';
 
 const ui = {
@@ -71,6 +73,7 @@ export function renderPlant(app: App): HTMLElement {
   const layout = p.layout;
   const issues = validateLayout(layout, signals);
   const errors = issues.filter((i) => i.level === 'error');
+  const palletIssue = issues.find((i) => i.field === 'pallets');
 
   // El número de paletas no reinicia la simulación: se añaden o quitan en marcha.
   const signature = JSON.stringify([p.id, signals, rules, { ...layout, pallets: 0 }]);
@@ -102,6 +105,7 @@ export function renderPlant(app: App): HTMLElement {
           <output class="stepper__val mono" data-slot="npallets">${plant ? palletCount(plant) : layout.pallets}</output>
           <button class="stepper__btn" data-pl="pplus" aria-label="Añadir una paleta"${plant ? '' : ' disabled'}>+</button>
           <span class="stepper__max muted small">máx. ${plant ? plant.capacity() : '—'}</span>
+          ${palletIssue ? `<span class="stepper__over" data-slot="pallets-over" title="${esc(palletIssue.text)}">${icon('alert', 14)}<span>Sobran ${Math.floor(layout.pallets) - (plant ? plant.capacity() : layoutCapacity(layout))}</span></span>` : ''}
         </div>
         <span class="toolbar__spacer"></span>
         <div class="segmented segmented--sm" role="radiogroup" aria-label="Vista">
@@ -132,6 +136,8 @@ export function renderPlant(app: App): HTMLElement {
     const scene = buildScene(layout, signals);
     canvas.classList.remove('plant-canvas--3d');
     canvas.innerHTML = scene.svg;
+    // En pantallas estrechas el esquema es más ancho que su tarjeta.
+    watchScrollEdges(root, '.plant-canvas');
     const svg = canvas.querySelector('svg')!;
     view = { update: (pl) => scene.update(svg, pl) };
     if (plant) view.update(plant);
@@ -209,6 +215,9 @@ export function renderPlant(app: App): HTMLElement {
       layout.pallets = plant.pallets.length + plant.pending;
       if (act === 'pplus' && plant.pending) toast('La paleta entrará por el punto de entrada en cuanto haya hueco.', 'info', 1800);
       commit();
+      // Con más paletas configuradas de las que caben, los avisos cambian al
+      // ajustar el número: se repinta la sección entera.
+      if (palletIssue) return app.refresh();
       qs(root, '[data-slot="npallets"]').textContent = palletCount(plant);
       const dims = root.querySelector<HTMLInputElement>('.plant-editor input[name="pallets"]');
       if (dims) dims.value = String(layout.pallets);
@@ -314,8 +323,16 @@ export function renderPlant(app: App): HTMLElement {
       const cyc = plant.stationCycles();
       const waits = plant.waitingStops();
       const blocked = plant.blockedFor();
+      const cond = (c: WaitCondition) =>
+        `<code>${esc(waitConditionText(c))}</code>${desc.get(c.signal) ? ` <span class="muted">(${esc(desc.get(c.signal)!)})</span>` : ''}`;
       const why = waits
-        .map((w) => `<li><code>${esc(w.cylinder)}</code> no abre: falta ${w.missing.map((m) => `<code>${esc(m)}</code>${desc.get(m.split(' ')[0]) ? ` <span class="muted">(${esc(desc.get(m.split(' ')[0])!)})</span>` : ''}`).join(', ')}</li>`)
+        .map((w) => {
+          const groups = w.missing.map((g) => {
+            const alt = g.map(cond).join(' o ');
+            return g.length > 1 && w.missing.length > 1 ? `(${alt})` : alt;
+          });
+          return `<li><code>${esc(w.cylinder)}</code> no abre: falta ${groups.join(', ')}</li>`;
+        })
         .join('');
       prod.innerHTML = `${
         blocked > 5
@@ -444,10 +461,10 @@ function setupForm(signals: Signal[], done: () => void): HTMLElement {
 
 const empty = (cols: number, text: string) => `<tr class="table-empty"><td colspan="${cols}">${esc(text)}</td></tr>`;
 
-function numField(name: string, label: string, value: number, unit: string, hint = ''): string {
-  return `<label class="field"><span class="field__label">${esc(label)}</span>
-    <span class="input-unit"><input class="input" type="number" min="0" step="any" name="${name}" value="${value}" /><span>${esc(unit)}</span></span>
-    ${hint ? `<span class="field__hint">${esc(hint)}</span>` : ''}</label>`;
+function numField(name: string, label: string, value: number, unit: string, hint = '', warn = ''): string {
+  return `<label class="field${warn ? ' field--warn' : ''}"><span class="field__label">${esc(label)}</span>
+    <span class="input-unit"><input class="input" type="number" min="0" step="any" name="${name}" value="${value}"${warn ? ` aria-invalid="true" aria-describedby="plant-${name}-warn"` : ''} /><span>${esc(unit)}</span></span>
+    ${hint ? `<span class="field__hint">${esc(hint)}</span>` : ''}${warn ? `<span class="field__warn" id="plant-${name}-warn" role="alert">${icon('alert', 14)}<span>${esc(warn)}</span></span>` : ''}</label>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +487,8 @@ function layoutEditor(
   const lineOpt = (v: ConveyorLine) =>
     `<option value="bottom"${v === 'bottom' ? ' selected' : ''}>Ramal de abajo</option><option value="top"${v === 'top' ? ' selected' : ''}>Ramal de arriba</option>`;
   const sigByName = new Map(signals.map((s) => [s.name, s]));
+  const capacity = layoutCapacity(layout);
+  const overCapacity = issues.some((i) => i.field === 'pallets');
 
   const el = h(`
     <section class="card plant-editor">
@@ -483,7 +502,7 @@ function layoutEditor(
         ${numField('palletLength', 'Paleta', layout.palletLength, 'mm')}
         ${numField('palletGap', 'Separación mínima', layout.palletGap, 'mm')}
         ${numField('speed', 'Velocidad', layout.speed, 'mm/s', `${((layout.speed * 60) / 1000).toFixed(1)} m/min`)}
-        ${numField('pallets', 'Paletas', layout.pallets, 'uds')}
+        ${numField('pallets', 'Paletas', layout.pallets, 'uds', `Caben ${capacity} como mucho`, overCapacity ? `Solo ${capacity === 1 ? 'cabe 1' : `caben ${capacity}`}: ${Math.floor(layout.pallets) - capacity === 1 ? 'sobra 1' : `sobran ${Math.floor(layout.pallets) - capacity}`}. Baja el número o deja más cola antes de los pre-topes.` : '')}
         <label class="field"><span class="field__label">Tipo</span>
           <select class="input" name="kind">
             <option value="aereo"${(layout.kind ?? 'aereo') === 'aereo' ? ' selected' : ''}>Aéreo · se carga por abajo</option>

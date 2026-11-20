@@ -18,7 +18,7 @@
 import type { Condition, ConveyorLayout, Rule, Signal, SignalLevel } from '../types';
 import { conditionGroups } from '../plc/rules';
 import { Simulator } from '../plc/simulation';
-import { PRESENCE_BEFORE_STOP, ahead, loopLength, palletEntry, sensorS, stopS, wrap } from './layout';
+import { PRESENCE_BEFORE_STOP, ahead, layoutCapacity, loopLength, palletEntry, sensorS, stopS, wrap } from './layout';
 
 export interface Pallet {
   id: number;
@@ -50,6 +50,44 @@ export interface PlantLogEntry {
   ruleName: string;
   target: string;
   to: SignalLevel;
+}
+
+/** Condición de nivel que falta: la señal debe valer `value`. */
+export interface WaitCondition {
+  signal: string;
+  value: SignalLevel;
+}
+
+/** Grupo «O»: se cumple en cuanto lo haga una cualquiera de sus condiciones. */
+export type WaitGroup = WaitCondition[];
+
+export interface StopWait {
+  cylinder: string;
+  /** Grupos que faltan; tienen que cumplirse todos. */
+  missing: WaitGroup[];
+}
+
+export const waitConditionText = (c: WaitCondition): string => `${c.signal} = ${c.value}`;
+
+/** «A = 1 o B = 1»: las alternativas de un grupo. */
+export const waitGroupText = (g: WaitGroup): string => g.map(waitConditionText).join(' o ');
+
+/**
+ * Texto de lo que falta: los grupos separados por comas; un grupo con varias
+ * alternativas va entre paréntesis cuando hay más grupos, para que no se lea
+ * como una sola lista.
+ */
+export function waitText(missing: WaitGroup[]): string {
+  return missing.map((g) => (g.length > 1 && missing.length > 1 ? `(${waitGroupText(g)})` : waitGroupText(g))).join(', ');
+}
+
+/**
+ * Quita los grupos que dependen solo de señales propias (p. ej. las de la
+ * estación mientras el robot trabaja: eso no es un bloqueo). Un grupo «O» con
+ * alguna alternativa ajena se conserva entero.
+ */
+export function waitsOnOthers(missing: WaitGroup[], own: ReadonlySet<string>): WaitGroup[] {
+  return missing.filter((g) => !g.every((c) => own.has(c.signal)));
 }
 
 const SUBSTEP_MS = 20;
@@ -154,9 +192,7 @@ export class Plant {
 
   /** Paletas que caben como mucho sin dejar ninguna dentro de una zona. */
   capacity(): number {
-    const { palletLength: len, palletGap: gap } = this.layout;
-    if (!this.stopPos.length) return Math.floor(this.L / (len + gap));
-    return this.queuePool().reduce((n, q) => n + Math.floor((q.room - len) / (len + gap)) + 1, 0);
+    return layoutCapacity(this.layout);
   }
 
   /**
@@ -192,28 +228,6 @@ export class Plant {
   private free(f: number): boolean {
     const need = this.layout.palletLength + this.layout.palletGap - 1e-6;
     return this.pallets.every((p) => Math.min(ahead(p.front, f, this.L), ahead(f, p.front, this.L)) >= need);
-  }
-
-  /** Colas donde se pueden dejar paletas: los pre-topes y el sitio que tienen detrás. */
-  private queuePool(): { t: { s: number; cylinder: string }; room: number }[] {
-    const { palletLength: len, palletGap: gap } = this.layout;
-    const pitch = len + gap;
-    const stops = [...this.stopPos].sort((a, b) => a.s - b.s);
-    if (!stops.length) return [];
-    const withStation = new Set(this.stations.map((s) => s.stop));
-    const queues = stops
-      .map((t, i) => {
-        const prev = stops[(i - 1 + stops.length) % stops.length];
-        const upstream = stops.length === 1 ? this.L : ahead(prev.s, t.s, this.L);
-        // No invadir la zona del tope anterior: hasta su último sensor de paso.
-        const after = this.layout.sensors
-          .filter((x) => x.ref === prev.cylinder && x.offset > 0)
-          .reduce((m, x) => Math.max(m, x.offset), 0);
-        return { t, room: upstream - after - pitch, station: withStation.has(t.cylinder) };
-      })
-      .filter((q) => q.room >= len);
-    const pre = queues.filter((q) => !q.station);
-    return pre.length ? pre : queues;
   }
 
   /** Último recurso: el centro del hueco libre más grande. */
@@ -271,13 +285,14 @@ export class Plant {
 
   /**
    * Para cada tope con paleta esperando y cerrado: qué condiciones de su regla
-   * de apertura faltan (p. ej. «PX08 = 0»). Explica por qué no abre.
+   * de apertura faltan. Cada elemento de `missing` es un grupo «O» completo
+   * (todas sus alternativas están sin cumplir; basta con que se cumpla una).
+   * Explica por qué no abre.
    */
-  waitingStops(): { cylinder: string; missing: string[] }[] {
+  waitingStops(): StopWait[] {
     const st = this.sim.states;
     const level = (c: Condition) =>
       c.event === '==1' ? st[c.signal] === 1 : c.event === '==0' ? st[c.signal] === 0 : null; // flancos: no se pueden «esperar»
-    const text = (c: Condition) => `${c.signal} = ${c.event === '==0' ? 0 : 1}`;
     return this.layout.stops
       .filter((t) => t.presence && st[t.presence] === 1 && st[t.cylinder] !== 1)
       .map((t) => {
@@ -285,12 +300,18 @@ export class Plant {
         const options = openers.map((r) =>
           conditionGroups(r.conditions)
             .filter((g) => !g.some((c) => level(c) !== false))
-            .map((g) => g.map(text).join(' o ')),
+            .map((g): WaitGroup => g.map((c) => ({ signal: c.signal, value: c.event === '==0' ? 0 : 1 }))),
         );
         options.sort((a, b) => a.length - b.length);
         return { cylinder: t.cylinder, missing: options[0] ?? [] };
       })
       .filter((x) => x.missing.length);
+  }
+
+  /** Señales que gobierna la estación de un tope (liberación y sensores de pieza). */
+  stationSignals(stop: string): Set<string> {
+    const st = this.stations.find((s) => s.stop === stop);
+    return new Set(st ? ([st.release, ...st.okSensors, ...st.nokSensors].filter(Boolean) as string[]) : []);
   }
 
   /** Segundos que lleva todo parado con el motor en marcha (bloqueo), o 0. */
