@@ -10,8 +10,9 @@
  *  4. Al final, los inductivos de los cilindros se actualizan.
  *
  * Tras un cambio externo se ejecutan ciclos hasta que el sistema se estabiliza,
- * de modo que las secuencias encadenadas se propagan solas. Si no se estabiliza
- * en MAX_SETTLE ciclos se avisa de una posible oscilación.
+ * de modo que las secuencias encadenadas se propagan solas, por largas que
+ * sean. Solo se avisa de oscilación si el sistema vuelve a un estado por el
+ * que ya pasó (estados y memoria de flancos), que es cuando no acabaría nunca.
  *
  * Mejoras respecto al prototipo original:
  *  - Las reacciones en cadena (una acción que provoca un flanco) ahora se ven.
@@ -20,12 +21,16 @@
  */
 
 import type { Activation, Condition, Rule, Signal, SignalLevel, SimEvent, SimStep } from '../types';
-import { conditionGroups } from './rules';
+import { conditionGroups, isRunnable, ruleActions, ruleConditions } from './rules';
 import { derivedSignals, externalInputs, type DerivedSignal } from './signals';
 
 type States = Record<string, SignalLevel>;
 
-const MAX_SETTLE = 12;
+/**
+ * Tope de seguridad de ciclos encadenados tras un cambio. Cada paso de una
+ * secuencia por inductivos gasta un ciclo, así que tiene que ser holgado.
+ */
+const MAX_SETTLE = 1000;
 
 export class Simulator {
   readonly signals: Signal[];
@@ -41,15 +46,29 @@ export class Simulator {
   /**
    * Con `externalDerived`, los inductivos no se calculan a partir del
    * cilindro: los fija desde fuera la simulación de planta (el cilindro
-   * tarda en recorrer).
+   * tarda en recorrer). Con `true` son todos; con una lista, solo los de
+   * esos cilindros (los topes), y el resto sigue a su cilindro como siempre.
    */
   readonly externalDerived: boolean;
+  /** Inductivos que sí calcula el simulador al final de cada ciclo. */
+  private readonly ownDerived: DerivedSignal[];
 
-  constructor(signals: Signal[], rules: Rule[], opts: { externalDerived?: boolean } = {}) {
+  constructor(
+    signals: Signal[],
+    rules: Rule[],
+    opts: { externalDerived?: boolean | Iterable<string> } = {},
+  ) {
     this.signals = signals;
     this.rules = rules;
-    this.externalDerived = !!opts.externalDerived;
     this.derived = derivedSignals(signals);
+    const ext = opts.externalDerived;
+    this.externalDerived = !!ext;
+    if (!ext) this.ownDerived = this.derived;
+    else if (ext === true) this.ownDerived = [];
+    else {
+      const outside = new Set(ext);
+      this.ownDerived = this.derived.filter((d) => !outside.has(d.source));
+    }
     this.reset();
   }
 
@@ -57,7 +76,7 @@ export class Simulator {
   reset(): void {
     this.states = {};
     this.signals.forEach((s) => (this.states[s.name] = s.initial));
-    this.updateDerived();
+    this.updateDerived(this.derived);
     this.memory = { ...this.states };
     this.history = [
       {
@@ -108,18 +127,43 @@ export class Simulator {
   private settle(events: SimEvent[]): SimStep[] {
     const added: SimStep[] = [];
     added.push(this.scan(events, true));
+    // Un ciclo depende solo de los estados y de la memoria de flancos: si
+    // se repite una pareja ya vista, la lógica da vueltas y no acabaría.
+    const seen = new Set<string>([this.signature()]);
     let scans = 1;
+    let loops = false;
     while (this.lastScanChanged && scans < MAX_SETTLE) {
       const step = this.scan([], false);
       if (step.activations.length > 0) added.push(step);
       scans++;
+      const sig = this.signature();
+      if (this.lastScanChanged && seen.has(sig)) {
+        loops = true;
+        break;
+      }
+      seen.add(sig);
     }
-    if (this.lastScanChanged) {
-      const msg =
-        'La lógica no se estabiliza tras un cambio: probablemente una regla con "Alternar" se dispara por nivel en cada ciclo.';
-      if (!this.warnings.includes(msg)) this.warnings.push(msg);
+    if (loops) {
+      this.warn(
+        'La lógica no se estabiliza tras un cambio: vuelve una y otra vez al mismo estado. Lo más habitual es una regla con "Alternar" que se dispara por nivel en cada ciclo.',
+      );
+    } else if (this.lastScanChanged) {
+      this.warn(
+        `La secuencia sigue cambiando después de ${MAX_SETTLE} ciclos seguidos: se detiene aquí y continúa con el siguiente cambio.`,
+      );
     }
     return added;
+  }
+
+  private warn(msg: string): void {
+    if (!this.warnings.includes(msg)) this.warnings.push(msg);
+  }
+
+  /** Huella del estado completo: valores actuales y memoria de flancos. */
+  private signature(): string {
+    return Object.keys(this.states)
+      .map((k) => `${k}=${this.states[k]}${this.memory[k] ?? '-'}`)
+      .join(';');
   }
 
   private lastScanChanged = false;
@@ -135,7 +179,8 @@ export class Simulator {
     const writes = new Map<string, Write[]>();
 
     this.rules.forEach((rule, ruleIndex) => {
-      if (!rule.conditions.length) return;
+      // Sin condiciones o sin acciones no se ejecuta (igual que en AWL y KOP).
+      if (!isRunnable(rule)) return;
       const isTrue = (c: Condition): boolean => {
         switch (c.event) {
           case 'Flanco ascendente':
@@ -197,7 +242,7 @@ export class Simulator {
       activations.push({ ...w, targetSignal: target, triggerTime: this.t, fromValue: begin, toValue: end });
     });
 
-    if (!this.externalDerived) this.updateDerived();
+    this.updateDerived(this.ownDerived);
     this.memory = start;
     this.lastScanChanged = Object.keys(this.states).some((k) => this.states[k] !== start[k]);
 
@@ -215,8 +260,8 @@ export class Simulator {
     return step;
   }
 
-  private updateDerived(): void {
-    this.derived.forEach((d) => {
+  private updateDerived(list: DerivedSignal[]): void {
+    list.forEach((d) => {
       const v = this.states[d.source] ?? 0;
       this.states[d.name] = (d.inverted ? 1 - v : v) as SignalLevel;
     });
@@ -242,7 +287,7 @@ export function runAutoScenario(signals: Signal[], rules: Rule[], minSteps = 20)
     if (demonstrated().has(id)) return;
 
     // Forzar las salidas al estado contrario para que el efecto sea visible.
-    const prep = rule.actions
+    const prep = ruleActions(rule)
       .filter((a) => a.value !== 'toggle' && !derived.has(a.signal))
       .map((a) => ({ signal: a.signal, value: (a.value === '1' ? 0 : 1) as SignalLevel }))
       .filter((x) => sim.states[x.signal] !== x.value);
@@ -251,7 +296,7 @@ export function runAutoScenario(signals: Signal[], rules: Rule[], minSteps = 20)
     // De cada grupo «O» basta con cumplir una condición: se usa la primera
     // que sea una entrada libre. Primero los permisivos (nivel) y después
     // los flancos que disparan.
-    const chosen = conditionGroups(rule.conditions).map((g) => g.find((c) => inputs.has(c.signal)) ?? g[0]);
+    const chosen = conditionGroups(ruleConditions(rule)).map((g) => g.find((c) => inputs.has(c.signal)) ?? g[0]);
     const ordered = [...chosen].sort(
       (a, b) => Number(isEdge(a.event)) - Number(isEdge(b.event)),
     );
