@@ -3,7 +3,7 @@
 import { allRules, project } from '../state/store';
 import { generateAWL } from '../plc/awl';
 import { generateKOP, ladderModel } from '../plc/kop';
-import { buildSymbolTable, symbolTableCSV } from '../plc/addresses';
+import { auxiliarySymbols, buildSymbolTable, markerPlan, symbolTableCSV } from '../plc/addresses';
 import { cleanSignals } from '../plc/signals';
 import { renderLadder, standaloneSvg } from '../diagram/ladder';
 import { copyText, download, esc, h, icon, qs, slug, toast } from './dom';
@@ -42,6 +42,11 @@ export function renderCode(app: App): HTMLElement {
   const signals = cleanSignals(p.signals);
   const rules = allRules();
   const symbols = buildSymbolTable(signals);
+  // Señales del proyecto y, detrás, las marcas auxiliares que usa el AWL.
+  const allSymbols = [...symbols, ...auxiliarySymbols(p.blocks, signals)];
+  const plan = markerPlan(p.blocks, signals);
+  const range = (from: number, to: number) => (to > from ? `M${from}–M${to}` : `M${from}`);
+  const reserved = `${range(plan.memoryByte, plan.pulseByte - 1)} memorias de flanco, ${range(plan.pulseByte, plan.flagByte - 1)} pulsos, ${range(plan.flagByte, plan.lastByte)} reglas activas`;
 
   const page = h(`
     <div class="page">
@@ -74,7 +79,7 @@ export function renderCode(app: App): HTMLElement {
     return page;
   }
 
-  const awl = generateAWL(p.blocks, { projectName: p.name });
+  const awl = generateAWL(p.blocks, { projectName: p.name, signals });
   const rungs = ladderModel(p.blocks);
   const base = slug(p.name);
 
@@ -83,7 +88,7 @@ export function renderCode(app: App): HTMLElement {
       [
         ['awl', 'AWL (lista de instrucciones)'],
         ['kop', 'KOP (esquema de contactos)'],
-        ['symbols', `Tabla de símbolos · ${symbols.length}`],
+        ['symbols', `Tabla de símbolos · ${allSymbols.length}`],
       ] as [Tab, string][]
     )
       .map(([id, label]) => `<button role="tab" class="tab${tab === id ? ' is-active' : ''}" aria-selected="${tab === id}" data-tab="${id}">${label}</button>`)
@@ -107,7 +112,7 @@ export function renderCode(app: App): HTMLElement {
       tools = `<button class="btn btn--ghost btn--sm" data-act="dl-csv">${icon('download', 15)}<span>Descargar CSV</span></button>`;
       content = `<div class="table-scroll"><table class="table">
         <thead><tr><th>Símbolo</th><th>Dirección</th><th>Tipo</th><th>Comentario</th></tr></thead>
-        <tbody>${symbols
+        <tbody>${allSymbols
           .map(
             (s) => `<tr><td class="mono">${esc(s.symbol)}</td><td class="mono"><span class="area area--${s.area.toLowerCase()}">${esc(s.address)}</span></td><td class="mono muted">BOOL</td><td>${esc(s.comment) || '<span class="muted">—</span>'}</td></tr>`,
           )
@@ -115,7 +120,7 @@ export function renderCode(app: App): HTMLElement {
     }
 
     body.innerHTML = `
-      <div class="callout callout--info">${icon('info', 18)}<p>Las direcciones (<strong>E</strong> entradas, <strong>A</strong> salidas, <strong>M</strong> marcas) son una propuesta automática. Ajústalas a la configuración de hardware real antes de cargar el programa. Marcas reservadas: M100–M109 memorias de flanco, M110–M119 pulsos, M120+ reglas activas.</p></div>
+      <div class="callout callout--info">${icon('info', 18)}<p>Las direcciones (<strong>E</strong> entradas, <strong>A</strong> salidas, <strong>M</strong> marcas) son una propuesta automática. Ajústalas a la configuración de hardware real antes de cargar el programa. Marcas reservadas: ${reserved}.</p></div>
       <div class="card card--flush">
         <div class="tabs-bar tabs-bar--card"><div class="tabs" role="tablist">${tabsHtml}</div><div class="tabs-bar__tools">${tools}</div></div>
         ${content}
@@ -138,7 +143,7 @@ export function renderCode(app: App): HTMLElement {
       if (kopAsText) void download(`${base}-kop.txt`, generateKOP(p.blocks));
       else void download(`${base}-kop.svg`, standaloneSvg(renderLadder(rungs, symbols).svg), 'image/svg+xml');
     } else if (act === 'dl-csv') {
-      void download(`${base}-simbolos.csv`, '﻿' + symbolTableCSV(symbols), 'text/csv;charset=utf-8');
+      void download(`${base}-simbolos.csv`, '﻿' + symbolTableCSV(allSymbols), 'text/csv;charset=utf-8');
     }
   });
   body.addEventListener('change', (e) => {

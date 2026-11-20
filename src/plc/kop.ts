@@ -7,7 +7,7 @@
  */
 
 import type { Block, ConditionEvent, ActionValue } from '../types';
-import { conditionGroups } from './rules';
+import { conditionGroups, isRunnable, ruleActions, ruleConditions, skipReason } from './rules';
 
 export type ContactKind = 'NO' | 'NC' | 'P' | 'N';
 export type CoilKind = 'S' | 'R' | 'T';
@@ -40,23 +40,41 @@ const CONTACT: Record<ConditionEvent, ContactKind> = {
 
 const COIL: Record<ActionValue, CoilKind> = { '1': 'S', '0': 'R', toggle: 'T' };
 
+/**
+ * El número de network es el de la regla (R1 = Network 1). Las reglas sin
+ * condiciones o sin acciones no se ejecutan y no se dibujan, pero conservan
+ * su número para que las demás no se desplacen.
+ */
 export function ladderModel(blocks: Block[]): LadderRung[] {
   const rungs: LadderRung[] = [];
+  let number = 0;
   blocks.forEach((b) =>
     (b.rules || []).forEach((r) => {
-      if (!r.actions.length) return;
+      number++;
+      if (!isRunnable(r)) return;
       rungs.push({
-        number: rungs.length + 1,
+        number,
         title: r.name,
         block: b.name,
-        contacts: conditionGroups(r.conditions).map((g) =>
+        contacts: conditionGroups(ruleConditions(r)).map((g) =>
           g.map((c) => ({ signal: c.signal, kind: CONTACT[c.event] })),
         ),
-        coils: r.actions.map((a) => ({ signal: a.signal, kind: COIL[a.value] })),
+        coils: ruleActions(r).map((a) => ({ signal: a.signal, kind: COIL[a.value] })),
       });
     }),
   );
   return rungs;
+}
+
+/** Reglas que no se dibujan, con su número y el motivo. */
+export function skippedRules(blocks: Block[]): { number: number; title: string; reason: string }[] {
+  const out: { number: number; title: string; reason: string }[] = [];
+  blocks
+    .flatMap((b) => b.rules || [])
+    .forEach((r, i) => {
+      if (!isRunnable(r)) out.push({ number: i + 1, title: r.name, reason: skipReason(r) });
+    });
+  return out;
 }
 
 const CONTACT_TXT: Record<ContactKind, (s: string) => string> = {
@@ -71,7 +89,10 @@ const COIL_TXT: Record<CoilKind, string> = { S: '(S)', R: '(R)', T: '(T)' };
 /** Representación de texto del esquema de contactos. */
 export function generateKOP(blocks: Block[]): string {
   const rungs = ladderModel(blocks);
-  if (!rungs.length) return '// (sin reglas con acciones)\n';
+  const skipped = skippedRules(blocks).map(
+    (k) => `// Network ${k.number}: ${k.title} (omitida: ${k.reason}, no se ejecuta)`,
+  );
+  if (!rungs.length) return ['// (sin reglas con acciones)', ...skipped].join('\n') + '\n';
   const out: string[] = [];
   let block = '';
   rungs.forEach((rg) => {
@@ -93,5 +114,6 @@ export function generateKOP(blocks: Block[]): string {
     });
     out.push('');
   });
+  if (skipped.length) out.push(...skipped, '');
   return out.join('\n');
 }

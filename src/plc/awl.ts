@@ -9,24 +9,13 @@
  *  - Network 1: detección de flancos con FP/FN al inicio del ciclo.
  *  - Una network por regla: cadena Y de condiciones → marca "regla activa"
  *    → SET/RESET/alternar de cada acción.
+ *  - Las reglas sin condiciones o sin acciones se omiten (como en el
+ *    simulador) y dejan un comentario; la numeración R1, R2… no se mueve.
  */
 
-import type { Block, Condition } from '../types';
-import { conditionGroups } from './rules';
-import {
-  EDGE_MEMORY_BYTE,
-  EDGE_PULSE_BYTE,
-  RULE_FLAG_BYTE,
-  bitAddress,
-} from './addresses';
-
-interface EdgeSlot {
-  key: string;
-  signal: string;
-  rising: boolean;
-  memory: string;
-  pulse: string;
-}
+import type { Block, Condition, Signal } from '../types';
+import { conditionGroups, isRunnable, ruleActions, ruleConditions, skipReason } from './rules';
+import { edgeKey, markerPlan } from './addresses';
 
 const pad = (s: string, n: number) => (s.length >= n ? s + ' ' : s + ' '.repeat(n - s.length));
 
@@ -42,6 +31,16 @@ function line(op: string, operand = '', comment = ''): string {
 export interface AwlOptions {
   /** Nombre del proyecto para la cabecera. */
   projectName?: string;
+  /**
+   * Señales del proyecto: con ellas las marcas auxiliares se colocan
+   * después de las marcas virtuales aunque haya muchas.
+   */
+  signals?: Signal[];
+}
+
+/** Etiqueta de salto n-ésima: «T» y tres caracteres en base 36 (STEP 7 admite 4 como máximo). */
+export function jumpLabel(n: number): string {
+  return `T${n.toString(36).toUpperCase().padStart(3, '0')}`;
 }
 
 export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
@@ -49,23 +48,8 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
   const rules = blocks.flatMap((b, bi) => (b.rules || []).map((r) => ({ r, bi, block: b })));
 
   // 1) Reservar memorias para cada flanco distinto usado.
-  const edges = new Map<string, EdgeSlot>();
-  rules.forEach(({ r }) =>
-    r.conditions.forEach((c) => {
-      if (c.event !== 'Flanco ascendente' && c.event !== 'Flanco descendente') return;
-      const rising = c.event === 'Flanco ascendente';
-      const key = `${c.signal}|${rising ? 'P' : 'N'}`;
-      if (edges.has(key)) return;
-      const i = edges.size;
-      edges.set(key, {
-        key,
-        signal: c.signal,
-        rising,
-        memory: bitAddress('M', i, EDGE_MEMORY_BYTE),
-        pulse: bitAddress('M', i, EDGE_PULSE_BYTE),
-      });
-    }),
-  );
+  const plan = markerPlan(blocks, opts.signals);
+  const edges = plan.edges;
 
   out.push('// ============================================================');
   out.push(`// OB1 - Ciclo principal${opts.projectName ? ` · Proyecto: ${opts.projectName}` : ''}`);
@@ -99,7 +83,7 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
         return line(neg, sym(c.signal), `${c.signal} = 0`);
       default: {
         const rising = c.event === 'Flanco ascendente';
-        const e = edges.get(`${c.signal}|${rising ? 'P' : 'N'}`)!;
+        const e = edges.get(edgeKey(c.signal, rising))!;
         return line(pos, e.pulse, `flanco ${rising ? '↑' : '↓'} ${c.signal}`);
       }
     }
@@ -112,6 +96,8 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
       : [line('U(', '', 'inicio rama en paralelo (O)'), ...g.map((c) => condLine(c, true)), line(')', '', 'fin rama en paralelo')];
 
   let currentBlock = -1;
+  /** Las etiquetas de salto se numeran seguidas en todo el programa. */
+  let labels = 0;
   rules.forEach(({ r, bi, block }, idx) => {
     if (bi !== currentBlock) {
       currentBlock = bi;
@@ -119,13 +105,18 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
       out.push(`// BLOQUE: ${block.name}`);
       out.push(`// ------------------------------------------------------------`);
     }
-    const flag = bitAddress('M', idx, RULE_FLAG_BYTE);
+    if (!isRunnable(r)) {
+      out.push(`// R${idx + 1} · ${r.name}: omitida (${skipReason(r)}), no se ejecuta.`);
+      out.push('');
+      return;
+    }
+    const flag = plan.ruleFlag(idx);
     out.push(`NETWORK // ${network++}`);
     out.push(`TITLE = R${idx + 1} · ${r.name}`);
-    conditionGroups(r.conditions).forEach((g) => out.push(...groupLines(g)));
+    conditionGroups(ruleConditions(r)).forEach((g) => out.push(...groupLines(g)));
     out.push(line('=', flag, 'regla activa'));
 
-    r.actions.forEach((a, ai) => {
+    ruleActions(r).forEach((a) => {
       if (a.value === '1') {
         out.push(line('U', flag));
         out.push(line('S', sym(a.signal), `SET ${a.signal}`));
@@ -133,7 +124,7 @@ export function generateAWL(blocks: Block[], opts: AwlOptions = {}): string {
         out.push(line('U', flag));
         out.push(line('R', sym(a.signal), `RESET ${a.signal}`));
       } else {
-        const label = `T${String(idx + 1).padStart(2, '0')}${ai}`;
+        const label = jumpLabel(labels++);
         out.push(line('U', flag));
         out.push(line('SPBN', label, `saltar si la regla no está activa`));
         out.push(line('UN', sym(a.signal)));
