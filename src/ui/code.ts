@@ -54,7 +54,7 @@ export function renderCode(app: App): HTMLElement {
         <div>
           <p class="eyebrow">Paso 4 de 5</p>
           <h1>Código PLC</h1>
-          <p class="lede">Programa equivalente a la simulación, listo para revisar e importar en STEP 7. Las direcciones se asignan automáticamente en la tabla de símbolos.</p>
+          <p class="lede">Programa equivalente a la simulación, listo para revisar e importar en STEP 7. Cada señal usa la dirección que tiene guardada en Señales.</p>
         </div>
       </header>
       <section data-slot="body"></section>
@@ -124,7 +124,7 @@ export function renderCode(app: App): HTMLElement {
     }
 
     body.innerHTML = `
-      <div class="callout callout--info">${icon('info', 18)}<p>Las direcciones (<strong>E</strong> entradas, <strong>A</strong> salidas, <strong>M</strong> marcas) son una propuesta automática. Ajústalas a la configuración de hardware real antes de cargar el programa. Marcas reservadas: ${reserved}.</p></div>
+      <div class="callout callout--info">${icon('info', 18)}<p>Las direcciones (<strong>E</strong> entradas, <strong>A</strong> salidas, <strong>M</strong> marcas) son las que tiene guardadas cada señal: no cambian al añadir o borrar otras y se editan en Señales. Ajústalas a la configuración de hardware real antes de cargar el programa. Marcas reservadas: ${reserved}.</p></div>
       <div class="card card--flush">
         <div class="tabs-bar tabs-bar--card"><div class="tabs" role="tablist">${tabsHtml}</div><div class="tabs-bar__tools">${tools}</div></div>
         ${content}

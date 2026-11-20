@@ -225,7 +225,9 @@ describe('Importación saneada', () => {
     const r = importProject(JSON.stringify(src));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.project.signals).toEqual(src.signals);
+    expect(r.project.signals).toMatchObject(src.signals);
+    // No traía direcciones: recibe las de siempre y nada más cambia.
+    expect(r.project.signals.map((s) => s.address)).toEqual(['A 0.0', 'E 0.0']);
     expect(r.project.blocks).toEqual(src.blocks);
     expect(r.project.layout).toEqual(src.layout);
   });

@@ -33,6 +33,7 @@ import {
   saveVersion,
   type FullBackup,
 } from './backups';
+import { ensureAddresses, type AddressFix } from '../plc/addresses';
 
 const STORAGE_KEY = 'autosequence_projects';
 const SAVE_DELAY = 400;
@@ -111,6 +112,13 @@ function normalizeSignal(raw: Raw): Signal {
   (['inductivoActivo', 'inductivoReposo', 'presence'] as const).forEach((k) => {
     if (typeof s[k] !== 'string' || !s[k]) delete s[k];
   });
+  // Direcciones: lo que no sea texto se pasa a texto para que `ensureAddresses`
+  // lo revise (y lo sustituya, avisando, si no es una dirección válida).
+  (['address', 'inductivoActivoAddress', 'inductivoReposoAddress'] as const).forEach((k) => {
+    const v = (raw as Raw)[k];
+    if (v === undefined || v === null) delete s[k];
+    else s[k] = typeof v === 'string' ? v : JSON.stringify(v);
+  });
   return s;
 }
 
@@ -151,7 +159,11 @@ function normalizeLayout(raw: unknown): ConveyorLayout | undefined {
   } as unknown as ConveyorLayout;
 }
 
-function normalize(p: Project): Project {
+/**
+ * `addressFixes`, si se pasa, recibe las direcciones E/A/M que venían mal
+ * (formato, repetidas, área equivocada) y se han sustituido.
+ */
+function normalize(p: Project, addressFixes?: AddressFix[]): Project {
   const raw = p as unknown as Raw;
   let nextId = Date.now();
   const rules = (list: unknown): Rule[] => objects(list).map((r) => normalizeRule(r, nextId++));
@@ -160,11 +172,16 @@ function normalize(p: Project): Project {
     ? rawBlocks.map((b) => ({ ...b, name: text(b.name) || 'Bloque', rules: rules(b.rules) }))
     : [{ name: 'Bloque principal', rules: rules(raw.rules) }];
   const layout = normalizeLayout(raw.layout);
+  const signals = objects(raw.signals).map(normalizeSignal);
+  // Un proyecto sin direcciones guardadas recibe las que se le calculaban
+  // hasta ahora; el que ya las trae las conserva.
+  const fixes = ensureAddresses(signals);
+  addressFixes?.push(...fixes);
   const out: Project = {
     ...p,
     id: text(raw.id) || newId(),
     name: text(raw.name).trim() || 'Proyecto sin nombre',
-    signals: objects(raw.signals).map(normalizeSignal),
+    signals,
     blocks,
     rules: blocks.flatMap((b) => b.rules),
     cajetin: isObj(raw.cajetin) ? (raw.cajetin as Partial<Cajetin>) : {},
@@ -336,7 +353,7 @@ export function exportAllJSON(): string {
 /** Importa un proyecto exportado o una copia completa de varios. */
 export function importFile(
   json: string,
-): { ok: true; imported: Project[]; skipped: number } | { ok: false; error: string } {
+): { ok: true; imported: Project[]; skipped: number; addressFixes: AddressFix[] } | { ok: false; error: string } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -346,13 +363,16 @@ export function importFile(
   const backup = data as Partial<FullBackup>;
   if (backup && backup.format === 'autosequence-backup' && Array.isArray(backup.projects)) {
     const imported: Project[] = [];
+    const addressFixes: AddressFix[] = [];
     let skipped = 0;
     let full = false;
     for (const p of backup.projects) {
       // Un proyecto que no se puede importar no corta la copia: se salta.
       const r = importProject(JSON.stringify(p ?? null));
-      if (r.ok) imported.push(r.project);
-      else {
+      if (r.ok) {
+        imported.push(r.project);
+        addressFixes.push(...r.addressFixes);
+      } else {
         skipped++;
         full ||= r.error === STORAGE_FULL;
       }
@@ -360,10 +380,10 @@ export function importFile(
     if (!imported.length) {
       return { ok: false, error: full ? STORAGE_FULL : 'La copia de seguridad no contiene proyectos válidos.' };
     }
-    return { ok: true, imported, skipped };
+    return { ok: true, imported, skipped, addressFixes };
   }
   const r = importProject(json);
-  return r.ok ? { ok: true, imported: [r.project], skipped: 0 } : r;
+  return r.ok ? { ok: true, imported: [r.project], skipped: 0, addressFixes: r.addressFixes } : r;
 }
 
 export function duplicateProject(id: string): Project | null {
@@ -382,8 +402,14 @@ export function duplicateProject(id: string): Project | null {
   return upsert(copy) ? copy : null;
 }
 
-/** Valida y añade un proyecto importado desde JSON. */
-export function importProject(json: string): { ok: true; project: Project } | { ok: false; error: string } {
+/**
+ * Valida y añade un proyecto importado desde JSON. Las direcciones E/A/M se
+ * conservan; las que vienen repetidas o no son válidas se sustituyen por el
+ * primer hueco libre y se devuelven en `addressFixes` para avisar.
+ */
+export function importProject(
+  json: string,
+): { ok: true; project: Project; addressFixes: AddressFix[] } | { ok: false; error: string } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -395,17 +421,18 @@ export function importProject(json: string): { ok: true; project: Project } | { 
     return { ok: false, error: 'El archivo no parece un proyecto de AutoSequence (faltan «name» o «signals»).' };
   }
   let project: Project;
+  const addressFixes: AddressFix[] = [];
   try {
     const base = p.name.trim() || 'Proyecto sin nombre';
     let name = base;
     let n = 2;
     while (nameTaken(name)) name = `${base} (${n++})`;
-    project = normalize({ ...(p as Project), id: undefined, name });
+    project = normalize({ ...(p as Project), id: undefined, name }, addressFixes);
   } catch {
     return { ok: false, error: 'El archivo está dañado y no se puede importar.' };
   }
   if (!upsert(project)) return { ok: false, error: STORAGE_FULL };
-  return { ok: true, project };
+  return { ok: true, project, addressFixes };
 }
 
 export function exportProjectJSON(project: Project): string {
@@ -521,6 +548,9 @@ export function commit(opts: { separate?: boolean } = {}): void {
   if (!p) return;
   p.updatedAt = Date.now();
   p.rules = p.blocks.flatMap((b) => b.rules);
+  // Las señales nuevas (se creen donde se creen) reciben aquí su dirección, y
+  // las que cambian de tipo, una del área que les toca. Las demás no se tocan.
+  ensureAddresses(p.signals);
   recordChange(p, opts.separate);
   session.saveStatus = 'pending';
   window.clearTimeout(saveTimer);

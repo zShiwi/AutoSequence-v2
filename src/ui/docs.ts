@@ -2,11 +2,11 @@
 
 import { allRules, project, setCajetin } from '../state/store';
 import { runAutoScenario } from '../plc/simulation';
-import { buildSymbolTable } from '../plc/addresses';
+import { auxiliarySymbols, buildSymbolTable, type SymbolEntry } from '../plc/addresses';
 import { cleanSignals, derivedSignals, signalsUsedBy } from '../plc/signals';
 import { buildRows } from '../diagram/timing';
 import { ruleLabeler, ruleLogicText } from '../plc/rules';
-import { renderCover, renderSheet } from '../diagram/sheet';
+import { SYMBOL_ROWS_PER_SHEET, renderCover, renderSheet, renderSymbolSheet, type SymbolRow } from '../diagram/sheet';
 import { standaloneSvg } from '../diagram/ladder';
 import type { Cajetin, Project } from '../types';
 import { download, esc, h, icon, modal, qs, slug, toast } from './dom';
@@ -32,15 +32,50 @@ interface Sheet {
   svg: string;
 }
 
+const GROUPS: Record<SymbolEntry['area'], string> = { E: 'Entradas (E)', A: 'Salidas (A)', M: 'Marcas (M)' };
+
+/**
+ * Filas de la tabla de símbolos del documento: las señales por áreas, con las
+ * direcciones guardadas, y detrás las marcas auxiliares que usa el programa
+ * (las mismas que lista la vista de Código).
+ */
+export function symbolRows(symbols: SymbolEntry[], auxiliary: SymbolEntry[]): SymbolRow[] {
+  const rows: SymbolRow[] = [];
+  (['E', 'A', 'M'] as const).forEach((area) => {
+    const list = symbols.filter((t) => t.area === area);
+    if (list.length) rows.push({ group: GROUPS[area] }, ...list);
+  });
+  if (auxiliary.length) rows.push({ group: 'Marcas auxiliares del programa' }, ...auxiliary);
+  return rows;
+}
+
+/** Reparte las filas en hojas; un título de grupo no se queda solo al final. */
+function paginate(rows: SymbolRow[]): SymbolRow[][] {
+  const pages: SymbolRow[][] = [];
+  let cur: SymbolRow[] = [];
+  rows.forEach((r) => {
+    if (cur.length === SYMBOL_ROWS_PER_SHEET || ('group' in r && cur.length === SYMBOL_ROWS_PER_SHEET - 1)) {
+      pages.push(cur);
+      cur = [];
+    }
+    cur.push(r);
+  });
+  if (cur.length) pages.push(cur);
+  return pages;
+}
+
 export function buildSheets(p: Project): Sheet[] {
   const signals = cleanSignals(p.signals);
   const symbols = buildSymbolTable(signals);
+  const auxiliary = auxiliarySymbols(p.blocks, signals);
+  const symbolPages = paginate(symbolRows(symbols, auxiliary));
+  const symbolCount = symbols.length + auxiliary.length;
   const descriptions: Record<string, string> = {};
   signals.forEach((s) => (descriptions[s.name] = s.description));
   derivedSignals(signals).forEach(
     (d) => (descriptions[d.name] = `Inductivo ${d.inverted ? 'retraído' : 'extendido'} ${d.source}`),
   );
-  const pages = p.blocks.length + 1;
+  const pages = p.blocks.length + 1 + symbolPages.length;
   const cajetin = p.cajetin ?? {};
   const ruleLabel = ruleLabeler(p.blocks);
 
@@ -69,11 +104,32 @@ export function buildSheets(p: Project): Sheet[] {
     });
   });
 
+  const symbolNote = `${symbolCount} símbolo${symbolCount === 1 ? '' : 's'}`;
+  symbolPages.forEach((rows, i) => {
+    const title = symbolPages.length > 1 ? `Tabla de símbolos (${i + 1} de ${symbolPages.length})` : 'Tabla de símbolos';
+    sheets.push({
+      title,
+      subtitle: `${symbolNote} · direcciones E, A y M`,
+      svg: renderSymbolSheet(rows, {
+        projectName: p.name,
+        cajetin,
+        page: p.blocks.length + 2 + i,
+        pages,
+        pageName: 'Tabla de símbolos',
+        title,
+        note: `${symbols.length} señal${symbols.length === 1 ? '' : 'es'} · ${auxiliary.length} marca${auxiliary.length === 1 ? '' : 's'} auxiliar${auxiliary.length === 1 ? '' : 'es'}`,
+      }),
+    });
+  });
+
   const cover: Sheet = {
     title: 'Portada',
     subtitle: 'Índice del documento',
     svg: renderCover(
-      p.blocks.map((b, i) => ({ title: b.name, rules: b.rules.length, page: i + 2 })),
+      [
+        ...p.blocks.map((b, i) => ({ title: b.name, rules: b.rules.length, page: i + 2 })),
+        ...(symbolPages.length ? [{ title: 'Tabla de símbolos', rules: 0, page: p.blocks.length + 2, note: symbolNote }] : []),
+      ],
       { signals: signals.length, rules: allRules().length },
       { projectName: p.name, cajetin, page: 1, pages, pageName: 'Portada' },
     ),
@@ -106,7 +162,7 @@ export function renderDocs(app: App): HTMLElement {
         <div>
           <p class="eyebrow">Paso 5 de 5</p>
           <h1>Documentación</h1>
-          <p class="lede">Hojas A3 apaisadas con la plantilla industrial: portada con índice y un diagrama funcional por bloque, con tabla de señales y cajetín.</p>
+          <p class="lede">Hojas A3 apaisadas con la plantilla industrial: portada con índice, un diagrama funcional por bloque con su tabla de señales y la tabla de símbolos con las direcciones, todo con cajetín.</p>
         </div>
         <div class="page-head__actions">
           <button class="btn btn--ghost" data-act="html" title="Documento completo para abrir en el navegador e imprimir">${icon('download', 16)}<span>Documento .html</span></button>

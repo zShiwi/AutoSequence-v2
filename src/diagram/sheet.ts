@@ -233,8 +233,52 @@ export function renderSheet(
   return wrap(out.join(''));
 }
 
+/** Fila de la hoja de símbolos: un símbolo o el título de un grupo. */
+export type SymbolRow = { group: string } | SymbolEntry;
+
+/** Filas que caben en una hoja de símbolos (tres columnas). */
+export const SYMBOL_ROWS_PER_SHEET = 3 * 41;
+
+/**
+ * Hoja con la tabla de símbolos: dirección, símbolo y comentario de cada
+ * señal y de las marcas auxiliares del programa, en tres columnas.
+ */
+export function renderSymbolSheet(rows: SymbolRow[], meta: SheetMeta & { title: string; note: string }): string {
+  const out: string[] = [frame()];
+  out.push(txt(30, 66, meta.title, { size: 13, weight: 700 }));
+  out.push(txt(1562, 66, meta.note, { size: 10.5, anchor: 'end', color: '#444' }));
+  const perCol = SYMBOL_ROWS_PER_SHEET / 3;
+  const colW = 1557 / 3;
+  const top = 80;
+  const rowH = 22;
+  for (let c = 0; c < 3; c++) {
+    const x = 15 + c * colW;
+    const part = rows.slice(c * perCol, (c + 1) * perCol);
+    if (c > 0) out.push(`<line x1="${x}" y1="${top}" x2="${x}" y2="1020" style="stroke:#000;stroke-width:1"/>`);
+    out.push(cell(x, top, colW, 26, '#F0F0F0'));
+    out.push(txt(x + 8, top + 17, 'Dirección', { size: 10.5, weight: 700 }));
+    out.push(txt(x + 84, top + 17, 'Símbolo', { size: 10.5, weight: 700 }));
+    out.push(txt(x + 236, top + 17, 'Comentario', { size: 10.5, weight: 700 }));
+    part.forEach((r, i) => {
+      const y = top + 26 + i * rowH;
+      const cy = y + 15;
+      if ('group' in r) {
+        out.push(`<rect x="${x}" y="${y}" width="${colW}" height="${rowH}" style="fill:#E4E4E4"/>`);
+        out.push(txt(x + 8, cy, r.group.toUpperCase(), { size: 9.5, weight: 700, color: '#222' }));
+      } else {
+        out.push(txt(x + 8, cy, r.address, { size: 10.5, mono: true, weight: 500 }));
+        out.push(txt(x + 84, cy, clip(r.symbol, 21), { size: 10.5, mono: true }));
+        out.push(txt(x + 236, cy, clip(r.comment, 50), { size: 10.5 }));
+      }
+      out.push(`<line x1="${x}" y1="${y + rowH}" x2="${x + colW}" y2="${y + rowH}" style="stroke:#BDBDBD;stroke-width:.6"/>`);
+    });
+  }
+  out.push(titleBlock(meta));
+  return wrap(out.join(''));
+}
+
 export function renderCover(
-  index: { title: string; rules: number; page: number }[],
+  index: { title: string; rules: number; page: number; note?: string }[],
   stats: { signals: number; rules: number },
   meta: SheetMeta,
 ): string {
@@ -247,14 +291,14 @@ export function renderCover(
   const ruleY = 312 + (titleLines.length - 1) * 54 + 30;
   out.push(`<line x1="120" y1="${ruleY}" x2="760" y2="${ruleY}" style="stroke:#000;stroke-width:2"/>`);
   out.push(txt(120, ruleY + 36, clip(`${c.company || ''}${c.companySubtitle ? ' · ' + c.companySubtitle : ''}`, 64), { size: 16, color: '#333' }));
-  out.push(txt(120, ruleY + 68, `${stats.signals} señales · ${stats.rules} reglas · ${index.length} bloques`, { size: 14, color: '#333' }));
+  out.push(txt(120, ruleY + 68, `${stats.signals} señales · ${stats.rules} reglas · ${index.filter((e) => e.note === undefined).length} bloques`, { size: 14, color: '#333' }));
 
   out.push(txt(900, 250, 'ÍNDICE', { size: 14, weight: 700, color: '#444' }));
   out.push(`<line x1="900" y1="262" x2="1460" y2="262" style="stroke:#000;stroke-width:1"/>`);
   index.forEach((e, i) => {
     const y = 296 + i * 34;
     out.push(txt(900, y, clip(e.title, 40), { size: 15 }));
-    out.push(txt(1340, y, `${e.rules} regla${e.rules === 1 ? '' : 's'}`, { size: 12, anchor: 'end', color: '#555' }));
+    out.push(txt(1340, y, e.note ?? `${e.rules} regla${e.rules === 1 ? '' : 's'}`, { size: 12, anchor: 'end', color: '#555' }));
     out.push(txt(1460, y, String(e.page), { size: 15, weight: 600, anchor: 'end', mono: true }));
     out.push(`<line x1="900" y1="${y + 12}" x2="1460" y2="${y + 12}" style="stroke:#CFCFCF;stroke-width:.6"/>`);
   });

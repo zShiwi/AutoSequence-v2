@@ -226,6 +226,16 @@ export function renderHome(app: App): HTMLElement {
       skipped ? 'info' : undefined,
       skipped ? 6000 : undefined,
     );
+    // Direcciones E/A/M repetidas o no válidas: se han sustituido y se avisa.
+    const fixed = res.addressFixes.length;
+    if (fixed) {
+      const first = res.addressFixes[0];
+      toast(
+        `${fixed === 1 ? 'Una dirección no era válida o estaba repetida y se ha reasignado' : `${fixed} direcciones no eran válidas o estaban repetidas y se han reasignado`}: ${first.symbol} pasa de «${first.from}» a ${first.to}${fixed > 1 ? ', entre otras' : ''}. Revísalas en Señales.`,
+        'warn',
+        9000,
+      );
+    }
     draw();
     drawNotice();
   });

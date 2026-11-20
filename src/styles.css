@@ -4334,3 +4334,73 @@ kbd {
     padding-top: 14px;
   }
 }
+
+/* ---- Señales: direcciones E/A/M ------------------------------------------ */
+
+.addr {
+  min-width: 0;
+  padding-inline: 6px;
+  text-align: center;
+  font-weight: 500;
+}
+
+.addr--e:not(:disabled) {
+  color: var(--t-in);
+}
+
+.addr--a:not(:disabled) {
+  color: var(--t-out);
+}
+
+.addr--m:not(:disabled) {
+  color: var(--t-mark);
+}
+
+.addr-cell .addr {
+  width: 100%;
+  min-width: 68px;
+  height: 36px;
+}
+
+.ind-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  /* Tarjeta de señal: la dirección va en su propia línea, con su nombre. */
+  .table--edit:not(.table--plant) tr:not([hidden]) {
+    grid-template-areas:
+      'name name del'
+      'type init usage'
+      'addr addr addr'
+      'desc desc desc'
+      'ind ind ind';
+  }
+
+  .table--edit:not(.table--plant) td.addr-cell {
+    grid-area: addr;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .table--edit:not(.table--plant) td.addr-cell::before {
+    content: 'Dirección';
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .table--edit:not(.table--plant) td.addr-cell .addr {
+    width: 96px;
+  }
+
+  .ind-row {
+    grid-template-columns: minmax(0, 1fr) 76px;
+  }
+}

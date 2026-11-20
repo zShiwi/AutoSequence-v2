@@ -27,6 +27,16 @@ export interface Signal {
    * parada en ese tope. El transportador lo coloca en el propio tope.
    */
   presence?: string;
+  /**
+   * Dirección asignada en el PLC («E 0.3», «A 1.0», «M 2.7»). Se guarda para
+   * que no cambie al añadir o borrar otras señales; a un proyecto antiguo que
+   * no la trae se le asigna al abrirlo (ver `ensureAddresses`).
+   */
+  address?: string;
+  /** Solo cilindros: dirección (entrada) del inductivo activo. */
+  inductivoActivoAddress?: string;
+  /** Solo cilindros: dirección (entrada) del inductivo de reposo. */
+  inductivoReposoAddress?: string;
 }
 
 /** Evento que evalúa una condición sobre una señal. */

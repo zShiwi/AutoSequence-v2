@@ -4,6 +4,7 @@ import { commit, project, renameSignalRefs, signalUsage, allRules } from '../sta
 import { exampleBlocks, exampleSignals } from '../data/example';
 import { TYPE_HINT, derivedSignals, presenceOwner } from '../plc/signals';
 import { canMoveRefs, signalProblems } from '../plc/signalcheck';
+import { areaOfSlot, checkAddress, renumberAddresses, type AddressSlot } from '../plc/addresses';
 import type { Signal, SignalType } from '../types';
 import { confirmDialog, esc, h, icon, qs, toast } from './dom';
 import { signalMatches } from './search';
@@ -33,6 +34,19 @@ const TYPE_FILTERS: { v: TypeFilter; label: string }[] = [
 
 function filtersActive(): boolean {
   return !!filters.q.trim() || filters.type !== 'all' || filters.unused;
+}
+
+const ADDR_LABEL: Record<AddressSlot, string> = {
+  address: 'Dirección',
+  inductivoActivoAddress: 'Dirección del inductivo activo',
+  inductivoReposoAddress: 'Dirección del inductivo de reposo',
+};
+
+/** Campo de dirección (E/A/M byte.bit) de una señal o de uno de sus inductivos. */
+function addrInput(s: Signal, slot: AddressSlot): string {
+  const area = areaOfSlot(s, slot);
+  const v = s[slot] ?? '';
+  return `<input class="input input--mono input--sm addr addr--${area.toLowerCase()}" data-addr="${slot}" value="${esc(v)}" placeholder="${v ? `${area} 0.0` : ''}" spellcheck="false" autocomplete="off" aria-label="${ADDR_LABEL[slot]}" title="${ADDR_LABEL[slot]} en el PLC. No cambia al añadir o borrar otras señales."${v ? '' : ' disabled'} />`;
 }
 
 /** Una señal está en uso si alguna regla la usa a ella o a sus inductivos. */
@@ -172,7 +186,42 @@ export function renderSignals(app: App): HTMLElement {
         ? `<span class="badge badge--neutral" title="${esc(usage.map((u) => `${u.block} › ${u.rule}`).join('\n'))}">${usage.length} regla${usage.length === 1 ? '' : 's'}</span>`
         : '<span class="muted">—</span>';
     });
+    refreshAddresses();
     drawStats();
+  };
+
+  /**
+   * Pone en cada campo la dirección guardada (las señales nuevas y los
+   * inductivos recién escritos la reciben al guardar). No toca el campo que
+   * se está editando ni el que tiene un valor rechazado a la vista.
+   */
+  const refreshAddresses = () => {
+    body.querySelectorAll<HTMLInputElement>('input[data-addr]').forEach((input) => {
+      const s = p.signals[Number(input.closest<HTMLElement>('tr[data-i]')!.dataset.i)];
+      const slot = input.dataset.addr as AddressSlot;
+      const v = s[slot] ?? '';
+      input.disabled = !v;
+      input.placeholder = v ? `${areaOfSlot(s, slot)} 0.0` : '';
+      if (document.activeElement === input || input.hasAttribute('aria-invalid')) return;
+      input.value = v;
+    });
+  };
+
+  const renumber = async () => {
+    const ok = await confirmDialog(
+      'Renumerar todas las direcciones',
+      `Se volverán a asignar todas las direcciones (<strong>E</strong>, <strong>A</strong> y <strong>M</strong>) seguidas y sin huecos, en el orden de la lista.</p>
+       <p class="modal__text">Las que hayas puesto a mano se pierden, y la documentación ya impresa o el cableado pueden dejar de coincidir con el programa.`,
+      { confirm: 'Renumerar todo', danger: true },
+    );
+    if (!ok) return;
+    const n = renumberAddresses(p.signals);
+    commit({ separate: true });
+    toast(
+      n ? `Direcciones renumeradas: ${n} ${n === 1 ? 'ha cambiado' : 'han cambiado'}.` : 'Las direcciones ya estaban seguidas y sin huecos.',
+      n ? undefined : 'info',
+    );
+    draw();
   };
 
   const draw = () => {
@@ -200,12 +249,13 @@ export function renderSignals(app: App): HTMLElement {
         <div class="table-scroll">
           <table class="table table--edit">
             <thead><tr>
-              <th style="width:22%">Nombre</th>
-              <th style="width:15%">Tipo</th>
-              <th style="width:8%">Inicial</th>
+              <th style="width:19%">Nombre</th>
+              <th style="width:13%">Tipo</th>
+              <th style="width:7%">Inicial</th>
               <th>Descripción</th>
-              <th style="width:20%">Inductivos de posición</th>
-              <th style="width:8%">Uso</th>
+              <th style="width:25%">Inductivos de posición</th>
+              <th style="width:8%">Dirección</th>
+              <th style="width:7%">Uso</th>
               <th class="actions"><span class="sr-only">Eliminar</span></th>
             </tr></thead>
             <tbody>
@@ -217,6 +267,7 @@ export function renderSignals(app: App): HTMLElement {
                     <div class="name-cell"><span class="type-ico type-ico--${s.type.toLowerCase()}">${icon(TYPE_ICON[s.type], 16)}</span>
                     <input class="input input--mono" data-f="name" value="${esc(s.name)}" placeholder="p. ej. CIL_A" spellcheck="false" aria-label="Nombre de la señal" /></div>
                     <p class="cell-error" hidden></p>
+                    <p class="cell-error" data-slot="addr-error" role="alert" hidden></p>
                   </td>
                   <td>
                     <select class="input" data-f="type" aria-label="Tipo">
@@ -232,13 +283,14 @@ export function renderSignals(app: App): HTMLElement {
                     ${
                       s.type === 'Cilindro'
                         ? `<div class="ind-pair">
-                             <label title="Inductivo activo: tope abierto / cilindro extendido"><span>Act.</span><input class="input input--mono input--sm" data-f="inductivoActivo" value="${esc(s.inductivoActivo ?? '')}" placeholder="${esc(s.name || 'CIL')}PX2" spellcheck="false" aria-label="Inductivo activo" /></label>
-                             <label title="Inductivo de reposo: tope cerrado / cilindro retraído"><span>Rep.</span><input class="input input--mono input--sm" data-f="inductivoReposo" value="${esc(s.inductivoReposo ?? '')}" placeholder="${esc(s.name || 'CIL')}PX1" spellcheck="false" aria-label="Inductivo de reposo" /></label>
+                             <div class="ind-row"><label title="Inductivo activo: tope abierto / cilindro extendido"><span>Act.</span><input class="input input--mono input--sm" data-f="inductivoActivo" value="${esc(s.inductivoActivo ?? '')}" placeholder="${esc(s.name || 'CIL')}PX2" spellcheck="false" aria-label="Inductivo activo" /></label>${addrInput(s, 'inductivoActivoAddress')}</div>
+                             <div class="ind-row"><label title="Inductivo de reposo: tope cerrado / cilindro retraído"><span>Rep.</span><input class="input input--mono input--sm" data-f="inductivoReposo" value="${esc(s.inductivoReposo ?? '')}" placeholder="${esc(s.name || 'CIL')}PX1" spellcheck="false" aria-label="Inductivo de reposo" /></label>${addrInput(s, 'inductivoReposoAddress')}</div>
                              <label title="Sensor que detecta la paleta parada en este tope"><span>Pres.</span><select class="input input--mono input--sm" data-f="presence" aria-label="Sensor de presencia del tope">${presenceOptions(p.signals, s.presence)}</select></label>
                            </div>`
                         : presenceChip(p.signals, s)
                     }
                   </td>
+                  <td class="addr-cell">${addrInput(s, 'address')}</td>
                   <td class="usage"></td>
                   <td class="actions"><button class="icon-btn icon-btn--danger" data-f="delete" aria-label="Eliminar señal">${icon('trash', 16)}</button></td>
                 </tr>`,
@@ -254,11 +306,13 @@ export function renderSignals(app: App): HTMLElement {
         </div>
         <div class="card__foot">
           <button class="btn btn--ghost btn--sm" data-act="add">${icon('plus', 16)}<span>Añadir señal</span></button>
-          <span class="muted small">Los cambios se guardan automáticamente. Al renombrar una señal se actualizan las reglas que la usan.</span>
+          <button class="btn btn--ghost btn--sm" data-act="renumber" title="Volver a asignar todas las direcciones seguidas y sin huecos">${icon('reset', 16)}<span>Renumerar todo</span></button>
+          <span class="muted small">Los cambios se guardan automáticamente. Al renombrar una señal se actualizan las reglas que la usan. Cada señal conserva su dirección aunque añadas o borres otras.</span>
         </div>
       </div>`;
 
     qs(body, '[data-act="add"]').addEventListener('click', add);
+    qs(body, '[data-act="renumber"]').addEventListener('click', renumber);
     qs(body, '[data-act="clear-filters"]').addEventListener('click', () => {
       clearFilters();
       qInput.focus();
@@ -300,6 +354,52 @@ export function renderSignals(app: App): HTMLElement {
           if (linked) draw();
         });
       }
+    });
+
+    // Direcciones: se validan al escribir y se guardan al salir del campo.
+    const addrError = qs(tr, '[data-slot="addr-error"]');
+    const addrInputs = [...tr.querySelectorAll<HTMLInputElement>('input[data-addr]')];
+    const showAddrError = () => {
+      const bad = addrInputs.find((x) => x.hasAttribute('aria-invalid'));
+      addrError.textContent = bad ? `${ADDR_LABEL[bad.dataset.addr as AddressSlot]}: ${bad.dataset.error}` : '';
+      addrError.hidden = !bad;
+    };
+    addrInputs.forEach((input) => {
+      const slot = input.dataset.addr as AddressSlot;
+      const check = () => {
+        const r = checkAddress(p.signals, i, slot, input.value);
+        input.toggleAttribute('aria-invalid', !r.ok);
+        input.dataset.error = r.ok ? '' : r.error;
+        showAddrError();
+        return r;
+      };
+      const restore = () => {
+        input.value = s[slot] ?? '';
+        input.removeAttribute('aria-invalid');
+        showAddrError();
+      };
+      input.addEventListener('input', check);
+      input.addEventListener('change', () => {
+        // Vacío: se vuelve a la dirección guardada (no puede quedar sin ninguna).
+        if (!input.value.trim()) return restore();
+        const r = check();
+        if (!r.ok) return;
+        input.value = r.address;
+        if (s[slot] === r.address) return;
+        s[slot] = r.address;
+        commit({ separate: true });
+        // Otra fila podía estar marcada por chocar con la dirección que se libera.
+        body
+          .querySelectorAll<HTMLInputElement>('input[data-addr][aria-invalid]')
+          .forEach((x) => x.dispatchEvent(new Event('input')));
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && input.value !== (s[slot] ?? '')) {
+          e.preventDefault();
+          e.stopPropagation();
+          restore();
+        }
+      });
     });
 
     tr.querySelector<HTMLSelectElement>('[data-f="presence"]')?.addEventListener('change', (e) => {
